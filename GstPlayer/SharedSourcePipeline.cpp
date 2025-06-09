@@ -1,4 +1,5 @@
-﻿#include "SharedSourcePipeline.h"
+﻿
+#include "SharedSourcePipeline.h"
 #include <gst/gst.h>
 #include <atomic>
 #include <thread>
@@ -14,9 +15,6 @@ static std::thread glibMainLoopThread;
 static std::atomic<bool> glibMainLoopStarted{ false };
 
 
-GstBufferPool* video_pool = nullptr;
-GstBufferPool* audio_pool = nullptr;
-
 bool Wait_for_state(GstElement* element, GstState desiredState, guint timeout_ms) {
     GstState current, pending;
     GstClockTime timeout = timeout_ms * GST_MSECOND;
@@ -28,7 +26,7 @@ static void set_queue_limits(GstElement* q) {
         "max-size-buffers", 20,
         "max-size-bytes", 0,
         "max-size-time", 100 * GST_MSECOND,
-        "leaky", 2, 
+        "leaky", 2,
         NULL);
 }
 SharedSourcePipeline::SharedSourcePipeline(const std::string& rtspUrl)
@@ -50,7 +48,7 @@ SharedSourcePipeline::SharedSourcePipeline(const std::string& rtspUrl)
             reg,
             "C:\\gstreamer\\1.0\\msvc_x86_64\\lib\\gstreamer-1.0"
         );
-        
+
         gstInitialized = true;
     }
 }
@@ -121,9 +119,9 @@ static void ensure_dynamic_audio_chain(
         );
     }
     // 4) 파이프라인에 추가
-    
+
     if (jitter)
-        g_object_set(jitter, "latency", 0,  NULL);
+        g_object_set(jitter, "latency", 0, NULL);
 
     // 5) 부모 상태와 동기화
     for (auto e : { queue, jitter, valve, decode, convert, resample, volume, sink })
@@ -168,9 +166,10 @@ static void ensure_dynamic_audio_chain(
 QRETURN WINAPI on_video_preview_callback(
     PVOID, double dSampleTime, BYTE* pFrame, ULONG len, PVOID user_data)
 {
-    if (!pFrame || len == 0) return QCAP_RT_OK;
+    auto data = static_cast<CaptureData*>(user_data);
+    if (!data || !pFrame || len == 0) return QCAP_RT_OK;
     GstBuffer* buf = nullptr;
-    if (gst_buffer_pool_acquire_buffer(video_pool, &buf, NULL) != GST_FLOW_OK)
+    if (gst_buffer_pool_acquire_buffer(data->videoPool, &buf, NULL) != GST_FLOW_OK)
         return QCAP_RT_FAIL;
 
     GstMapInfo info;
@@ -181,7 +180,7 @@ QRETURN WINAPI on_video_preview_callback(
     GST_BUFFER_PTS(buf) = gst_util_uint64_scale(dSampleTime * GST_SECOND, 1, 1);
     GST_BUFFER_DURATION(buf) = gst_util_uint64_scale(1, GST_SECOND, 30);
 
-    if (gst_app_src_push_buffer(GST_APP_SRC(user_data), buf) != GST_FLOW_OK) {
+    if (gst_app_src_push_buffer(data->videoSrc, buf) != GST_FLOW_OK) {
         g_printerr("video push-buffer failed\n");
         //g_main_loop_quit(main_loop);
     }
@@ -193,10 +192,11 @@ QRETURN WINAPI on_video_preview_callback(
 QRETURN WINAPI on_audio_preview_callback(
     PVOID, double dSampleTime, BYTE* pAudio, ULONG len, PVOID user_data)
 {
-    if (!pAudio || len == 0) return QCAP_RT_OK;
-    GstAppSrc* appsrc = GST_APP_SRC(user_data);
+    auto data = static_cast<CaptureData*>(user_data);
+    if (!data || !pAudio || len == 0) return QCAP_RT_OK;
+
     GstBuffer* buf = nullptr;
-    if (gst_buffer_pool_acquire_buffer(audio_pool, &buf, NULL) != GST_FLOW_OK)
+    if (gst_buffer_pool_acquire_buffer(data->audioPool, &buf, NULL) != GST_FLOW_OK)
         return QCAP_RT_FAIL;
 
     GstMapInfo info;
@@ -210,7 +210,7 @@ QRETURN WINAPI on_audio_preview_callback(
     GST_BUFFER_PTS(buf) = pts;
     GST_BUFFER_DURATION(buf) = dur;
 
-    if (gst_app_src_push_buffer(appsrc, buf) != GST_FLOW_OK) {
+    if (gst_app_src_push_buffer(data->audioSrc, buf) != GST_FLOW_OK) {
         g_printerr("audio push-buffer failed\n");
 
     }
@@ -545,24 +545,29 @@ bool SharedSourcePipeline::CreateCaptureBranch(GstElement** branchOut) {
         "video/x-raw", "format", G_TYPE_STRING, "YUY2",
         "width", G_TYPE_INT, VW, "height", G_TYPE_INT, VH,
         "framerate", GST_TYPE_FRACTION, VFPS, 1, NULL);
-    video_pool = gst_buffer_pool_new();
+    if (!captureData_) captureData_ = new CaptureData();
+    captureData_->videoSrc = GST_APP_SRC(source);
+    captureData_->videoPool = gst_buffer_pool_new();
     {
         GstCaps* pc = gst_caps_copy(vcaps);
-        GstStructure* cfg = gst_buffer_pool_get_config(video_pool);
-        gst_buffer_pool_config_set_params(cfg, pc, VW * VH * 2, 2, 30);
-        gst_buffer_pool_set_config(video_pool, cfg);
-        gst_buffer_pool_set_active(video_pool, TRUE);
+        GstStructure* cfg = gst_buffer_pool_get_config(captureData_->videoPool);
+        gst_buffer_pool_config_set_params(cfg, pc, VW * VH * 2, 2, 60);
+        gst_buffer_pool_set_config(captureData_->videoPool, cfg);
+        gst_buffer_pool_set_active(captureData_->videoPool, TRUE);
         gst_caps_unref(pc);
     }
     GstCaps* acaps = gst_caps_from_string(
         "audio/x-raw,format=S16LE,channels=2,rate=48000,layout=interleaved");
-    audio_pool = gst_buffer_pool_new();
+
+
+    captureData_->audioPool = gst_buffer_pool_new();
+
     {
         GstCaps* pc = gst_caps_copy(acaps);
-        GstStructure* cfg = gst_buffer_pool_get_config(audio_pool);
-        gst_buffer_pool_config_set_params(cfg, pc, 48000 * 4 / 2, 30, 150);
-        gst_buffer_pool_set_config(audio_pool, cfg);
-        gst_buffer_pool_set_active(audio_pool, TRUE);
+        GstStructure* cfg = gst_buffer_pool_get_config(captureData_->audioPool);
+        gst_buffer_pool_config_set_params(cfg, pc, 48000 * 4 / 2, 30, 200);
+        gst_buffer_pool_set_config(captureData_->audioPool, cfg);
+        gst_buffer_pool_set_active(captureData_->audioPool, TRUE);
         gst_caps_unref(pc);
     }
     // 캡스 설정: video/x-raw, YUY2 포맷, 1920x1080 해상도, 30fps
@@ -573,7 +578,7 @@ bool SharedSourcePipeline::CreateCaptureBranch(GstElement** branchOut) {
 
     // downstream 요소 생성: queue와 videoconvert
     GstElement* queue = gst_element_factory_make("queue", "capture_queue");
-    set_queue_limits(queue;
+    set_queue_limits(queue);
     if (!queue) {
         g_printerr("Capture branch: Failed to create queue.\n");
         return false;
@@ -600,6 +605,7 @@ bool SharedSourcePipeline::CreateCaptureBranch(GstElement** branchOut) {
     if (!asrc || !aque || !acon || !aident || !vol || !ares || !asnk) {
         return false;
     }
+    captureData_->audioSrc = GST_APP_SRC(asrc);
     set_queue_limits(aque);
     set_queue_limits(queue);
     gst_bin_add_many(GST_BIN(pipeline_), asrc, aque, acon, aident, vol, ares, asnk, NULL);
@@ -640,8 +646,8 @@ bool SharedSourcePipeline::CreateCaptureBranch(GstElement** branchOut) {
         "stream-type", GST_APP_STREAM_TYPE_STREAM,
         "do-timestamp", TRUE, NULL);
     // QCAP 콜백 등록: on_video_preview_callback을 등록하여 캡쳐된 프레임을 appsrc로 push하도록 함
-    fQ_VID(qcapDevice_, on_video_preview_callback, source);
-    fQ_AUD(qcapDevice_, on_audio_preview_callback, asrc);
+    fQ_VID(qcapDevice_, on_video_preview_callback, captureData_);
+    fQ_AUD(qcapDevice_, on_audio_preview_callback, captureData_);
     //QCAP_SET_VIDEO_DEFAULT_OUTPUT_FORMAT(qcapDevice_, QCAP_COLORSPACE_TYPE_YUY2, 1920, 1080, FALSE, 30.0);
     fQ_RUN(qcapDevice_);
     // 큐캡에서 프레임 레이트를 설정하는 예:
@@ -671,8 +677,13 @@ bool SharedSourcePipeline::CreateVideoBranch(GstElement** branchOut) {
     }
 
     GstElement* qv_f = gst_element_factory_make("queue", "video_queue_file");
+    g_object_set(qv_f,
+        "max-size-buffers", 20,
+        "max-size-bytes", 0,
+        "max-size-time", 50 * GST_MSECOND,
+        //"leaky", 2, 
+        NULL);
 
-    set_queue_limits(qv_f);
     gst_bin_add_many(GST_BIN(pipeline_), source, demux, qv_f, NULL);
 
     if (!gst_element_link(source, demux)) {
@@ -806,6 +817,22 @@ void SharedSourcePipeline::Shutdown() {
         qcapDevice_ = nullptr;
 
     }
+    if (captureData_) {
+        if (captureData_->videoPool) {
+            gst_buffer_pool_set_active(captureData_->videoPool, FALSE);
+            gst_object_unref(captureData_->videoPool);
+            captureData_->videoPool = nullptr;
+        }
+        if (captureData_->audioPool) {
+            gst_buffer_pool_set_active(captureData_->audioPool, FALSE);
+            gst_object_unref(captureData_->audioPool);
+            captureData_->audioPool = nullptr;
+        }
+        captureData_->videoSrc = nullptr;
+        captureData_->audioSrc = nullptr;
+        delete captureData_;
+        captureData_ = nullptr;
+    }
     if (hQ) {
         FreeLibrary(hQ);
         hQ = nullptr;
@@ -816,7 +843,7 @@ void SharedSourcePipeline::Shutdown() {
 //    Toggle the valve’s drop property for the given chain id.
 void SharedSourcePipeline::ToggleMute() {
     // build name and lookup
-    
+
     GstElement* valve = gst_bin_get_by_name(GST_BIN(pipeline_), "valve");
     if (!valve) {
         g_printerr("ToggleMute: valve  not found\n");
@@ -829,5 +856,20 @@ void SharedSourcePipeline::ToggleMute() {
     gst_object_unref(valve);
 
     g_print("Audio chain is now %s\n",
-         isMute ? "MUTED" : "UNMUTED");
+        isMute ? "MUTED" : "UNMUTED");
+}
+void SharedSourcePipeline::SetVolume(double vol) {
+    // build name and lookup
+
+    GstElement* volume = gst_bin_get_by_name(GST_BIN(pipeline_), "volume");
+    if (!volume) {
+        g_printerr("ToggleMute: valve  not found\n");
+        return;
+    }
+
+    // flip state and apply
+//    isMute = !isMute;
+    g_object_set(volume, "volume", vol, NULL);
+    gst_object_unref(volume);
+
 }

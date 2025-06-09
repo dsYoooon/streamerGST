@@ -214,7 +214,7 @@ namespace GStreamerDotNetTest
                 int idx = i; // 클로저를 위한 변수 복사 (for 루프 변수 캡처 주의)
                              // consumerBins[idx] 접근 시 인덱스 오류 방지
                 ConsumerBinWrapper currentConsumer = consumerBins[idx];
-
+                //SourceManagerWrapper.set
                 attachTasks.Add(Task.Run(() =>
                 {
                      
@@ -300,14 +300,14 @@ namespace GStreamerDotNetTest
             //"rtsp://192.168.10.26:10554/screen1",
             //"rtsp://192.168.10.27:10554/screen1",
             "video://z:/file/16.mp4",
-            "capture://SC0710 PCI,0",
+            //"capture://SC0710 PCI,0",
             //"capture://SC0710 PCI,1", 
-            "image://C:/shared/file/1.jpg",
-            "rtsp://192.168.10.21:10554/screen1", 
+            //"image://C:/shared/file/1.jpg",
+            //"rtsp://192.168.10.21:10554/screen1", 
             //"rtsp://admin:opticis031!@192.168.10.69/Streaming/Channels/101",
              
             //"capture://SC0710 PCI,1",
-            //"capture://SC0710 PCI,2",
+            //"capture://SC0710 PCI,2", 11.3기가
             //"capture://SC0710 PCI,3",
             //"rtsp://192.168.10.23:10554/screen1",
             //"rtsp://192.168.10.23:10554/screen1",
@@ -364,7 +364,7 @@ namespace GStreamerDotNetTest
             //"image://C:/shared/file/1.jpg",
         };
                              
-        int cnt =4; 
+        int cnt =1; 
         int shiftnum = 0;
         private Timer _timer;
         bool isStart = false;

@@ -52,7 +52,7 @@ public:
 
     void ToggleMute();
     //capturº¯¼ö
-
+    void SetVolume(double vol);
 private:
     bool isMute = true;
     double CaptureFPS;

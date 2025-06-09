@@ -18,6 +18,7 @@ public:
     void ReleaseSource(const std::string& rtspUrl);
     void CheckTee(const std::string& rtspUrl);
     void ToggleMute(const std::string& rtspUrl);
+    void SetVolume(const std::string& rtspUrl, double vol);
     
 private:
     SourceManager();

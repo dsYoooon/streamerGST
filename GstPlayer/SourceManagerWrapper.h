@@ -319,7 +319,20 @@ namespace GStreamerWrapperCLI {
             }
 
             GstBin* sspPipeline = GST_BIN(GST_ELEMENT(parentObj));
+            GstElement* volume = gst_bin_get_by_name(GST_BIN(sspPipeline), "volume");
+            if (!volume) {
+                g_printerr("ToggleMute: valve  not found\n");
+                
+            }
+            else
+            {
+                g_object_set(volume, "volume", 0, NULL);
+                gst_object_unref(volume);
+            }
 
+            // flip state and apply
+        //    isMute = !isMute;
+            
             // ghost-pad unlink (위와 동일)
             GstPad* branch_sink = nullptr;
             if ((branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_rtsp_h264")) ||
@@ -363,6 +376,9 @@ namespace GStreamerWrapperCLI {
                 gst_object_unref(parentObj);
                 return false;
             }
+
+
+
             //gst_object_unref(parentObj);
             //gst_object_unref(sinkBin);
             g_print("AutoDetachConsumerBin: Successfully detached sinkbin from pipeline.\n");
@@ -375,6 +391,12 @@ namespace GStreamerWrapperCLI {
             if (pipeline)
                 pipeline->ToggleMute();
         } 
-
+        static void SetVolume(String^ rtspUrl,double vol) {
+            msclr::interop::marshal_context context;
+            std::string url = context.marshal_as<std::string>(rtspUrl);
+            SharedSourcePipeline* pipeline = SourceManager::Instance().GetOrCreateSource(url);
+            if (pipeline)
+                pipeline->SetVolume(vol);
+        }
     }; 
 }

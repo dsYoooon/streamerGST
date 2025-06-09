@@ -56,7 +56,13 @@ void SourceManager::ToggleMute(const std::string& rtspUrl) {
         it->second->ToggleMute();
     }
 }
-
+void SourceManager::SetVolume(const std::string& rtspUrl, double vol) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = sources_.find(rtspUrl);
+    if (it != sources_.end()) {
+        it->second->SetVolume(vol);
+    }
+}
 void SourceManager::ReleaseSource(const std::string& rtspUrl) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = sources_.find(rtspUrl);
