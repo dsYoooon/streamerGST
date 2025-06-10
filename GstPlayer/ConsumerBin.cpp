@@ -11,7 +11,7 @@
 #include <cstdio>
 
 // 전역적으로 FPS 표시 on/off 여부 (true: 표시, false: 미표시)
-static std::atomic_bool g_showFps(false);
+static std::atomic_bool g_showFps(true);
 static bool qcapOk = false;
 // FPS 측정을 위한 데이터 구조체 (pad probe callback에서 사용)
 struct FpsData {
@@ -51,10 +51,10 @@ static std::atomic<int> consumerCounter{ 0 };
 static std::atomic<int> globalConsumerDecoderIndex{ 0 };
 static void set_queue_limits(GstElement* q) {
     g_object_set(q,
-        "max-size-buffers", 10,
+        "max-size-buffers", 0,
         "max-size-bytes", 0,
-        "max-size-time", 50 * GST_MSECOND,
-        //"leaky", 2, 
+        "max-size-time", 350 * GST_MSECOND,
+        //"leaky", 1, 
         NULL);
 }
 ConsumerBin::ConsumerBin(int left, int top, int width, int height, int zorder)
@@ -106,8 +106,8 @@ HWND ConsumerBin::CreatePlaybackWindow(int left, int top, int width, int height)
     wc.lpszClassName = CLASS_NAME;
     RegisterClass(&wc);
     HWND hwnd = CreateWindowEx(
-        //WS_EX_TOOLWINDOW,
-        WS_OVERLAPPED,
+        WS_EX_TOOLWINDOW,
+       // WS_OVERLAPPED,
         CLASS_NAME,
         L"",
         WS_POPUP | WS_VISIBLE ,
@@ -194,7 +194,13 @@ bool ConsumerBin::Init() {
     set_queue_limits(qc);
     set_queue_limits(vt_queue);
     set_queue_limits(q_rtsp);
-    set_queue_limits(q_file);
+    //set_queue_limits(q_file);
+    g_object_set(q_file,
+        "max-size-buffers", 0,
+        "max-size-bytes", 0,
+        "max-size-time", 2000 * GST_MSECOND,
+        "leaky", 1, 
+        NULL);
     set_queue_limits(vq_out);
     set_queue_limits(image_queue);
     g_object_set(identity, "sync", false, NULL);
@@ -207,9 +213,10 @@ bool ConsumerBin::Init() {
         
     g_object_set(G_OBJECT(sink),
         "enable-last-sample", false,
-        /*"sync", TRUE,
+        //"force-aspect-ratio", false,
+        "sync", TRUE,
         "render-delay", 0,
-        "max-lateness", 0,*/
+        "max-lateness", 0,
         NULL);
 
     gst_bin_add_many(GST_BIN(consumerBin_), input_selector, vq_out, identity, overlay, sink, NULL);
@@ -756,13 +763,13 @@ void ConsumerBin::ShowWin(bool isShowing) {
         //
         
         gst_object_unref(sink);
-        ShowWindow(windowHandle, SW_SHOWNORMAL);
+        ShowWindow(windowHandle, SW_SHOW);
         // 2) d3d11videosink 요소 가져오기
        
     }
     else
     {
-        ShowWindow(windowHandle, SW_SHOWMINIMIZED);
+        ShowWindow(windowHandle, SW_HIDE);
         
     }
     

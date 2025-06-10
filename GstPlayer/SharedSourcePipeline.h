@@ -6,7 +6,7 @@
 #include <Windows.h>
 #include "QCAP.H"  
 #include <gst/gst.h>
-#include <atomic>
+//#include <atomic>
 #include <thread>
 #include <fstream>
 #include <iostream>
@@ -62,7 +62,7 @@ private:
     bool CreateImageBranch(GstElement** branchOut);     // 이미지 파일 소스 분기 (filesrc → decodebin → imagefreeze)
     bool CreateVideoBranch(GstElement** branchOut);     // 동영상 파일 소스 분기 (filesrc → qtdemux → h264parse)
     bool CreateRTSPBranch(GstElement** branchOut);      // RTSP 분기
-
+    bool CreateCaptureBranch(GstElement** branchOut, bool useAudio);
     // --- 캡쳐 소스용 분기 추가 ---
     bool CreateCaptureBranch(GstElement** branchOut);
 

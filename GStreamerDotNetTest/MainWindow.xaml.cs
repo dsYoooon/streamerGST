@@ -219,8 +219,9 @@ namespace GStreamerDotNetTest
                 {
                      
                     SourceManagerWrapper.AttachConsumerBin("fakesrc://", currentConsumer.GetBin(), false);
-
+                    
                 }));
+                currentConsumer.ShowWin(false);
             }
             await Task.WhenAll(attachTasks);
 
@@ -292,22 +293,92 @@ namespace GStreamerDotNetTest
             "rtsp://192.168.10.27:10554/screen1",
         };
         string[] urls = {
+       "capture://SC0710 PCI,0",
+       "capture://SC0710 PCI,2",
+       
             
-            //"rtsp://192.168.10.22:10554/screen1",
+            
+            "capture://SC0710 PCI,8",
+            "capture://SC0710 PCI,10",
+            "capture://SC0710 PCI,1",
+       "capture://SC0710 PCI,3",
+
+            "capture://SC0710 PCI,9",
+            "capture://SC0710 PCI,11",
+
+            "rtsp://192.168.10.23:10554/screen1",
+            "rtsp://192.168.10.24:10554/screen1",
+            "rtsp://192.168.10.25:10554/screen1",
+            "rtsp://192.168.10.26:10554/screen1",
+            "rtsp://192.168.10.27:10554/screen1",
+                  "rtsp://admin:admin@192.168.10.122:554/hdmi1",
+            "rtsp://admin:admin@192.168.10.123:554/hdmi1",
+            "rtsp://admin:admin@192.168.10.124:554/hdmi1",
+            //"rtsp://admin:admin@192.168.10.125:554/hdmi1",
+
+            //   "capture://SC0710 PCI,4",
+            //"capture://SC0710 PCI,5",
+            //"capture://SC0710 PCI,6",
+            //"capture://SC0710 PCI,7",
+            //"capture://SC0710 PCI,8",
+            //"capture://SC0710 PCI,10",
+
+            //"capture://SC0710 PCI,0",
+            //"capture://SC0710 PCI,1",
+
+
+            //"capture://SC0710 PCI,9",
+            //"capture://SC0710 PCI,11",
+            //"capture://SC0710 PCI,2",
+            //"capture://SC0710 PCI,3",
+            //"capture://SC0710 PCI,5",
+            //"capture://SC0710 PCI,6",
+            //"capture://SC0710 PCI,7",
+            //"capture://SC0710 PCI,8",
+
+
+            //"video://z:/file/14.mp4",
+            //"video://z:/file/15.mp4",
+            //"video://z:/file/16.mp4",
+            //"video://z:/file/17.mp4",
+            
             //"rtsp://192.168.10.23:10554/screen1",
             //"rtsp://192.168.10.24:10554/screen1",
             //"rtsp://192.168.10.25:10554/screen1",
             //"rtsp://192.168.10.26:10554/screen1",
             //"rtsp://192.168.10.27:10554/screen1",
-            "video://z:/file/16.mp4",
             //"capture://SC0710 PCI,0",
-            //"capture://SC0710 PCI,1", 
+            //"capture://SC0710 PCI,1",
+            //"capture://SC0710 PCI,2",
+            //"capture://SC0710 PCI,3",
+            ////"capture://SC0710 PCI,4",
+            //"capture://SC0710 PCI,5",
+            //"capture://SC0710 PCI,6",
+            //"capture://SC0710 PCI,7",
+            //"capture://SC0710 PCI,8",
+            ////"rtsp://admin:admin@192.168.10.121:554/hdmi1",
+            //"rtsp://admin:admin@192.168.10.122:554/hdmi1",
+            //"rtsp://admin:admin@192.168.10.123:554/hdmi1",
+            //"rtsp://admin:admin@192.168.10.124:554/hdmi1",
+            //"rtsp://admin:admin@192.168.10.125:554/hdmi1",
+            //"rtsp://admin:admin@192.168.10.126:554/hdmi1",
+            //"rtsp://admin:admin@192.168.10.127:554/hdmi1",
+            //"rtsp://admin:opticis031!@192.168.10.66/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.69/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.70/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.72/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.75/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.76/Streaming/Channels/101",
+
+
+
+            //"capture://SC0710 PCI,9", 
             //"image://C:/shared/file/1.jpg",
             //"rtsp://192.168.10.21:10554/screen1", 
             //"rtsp://admin:opticis031!@192.168.10.69/Streaming/Channels/101",
              
             //"capture://SC0710 PCI,1",
-            //"capture://SC0710 PCI,2", 11.3기가
+            //"capture://SC0710 PCI,2",// 11.3기가
             //"capture://SC0710 PCI,3",
             //"rtsp://192.168.10.23:10554/screen1",
             //"rtsp://192.168.10.23:10554/screen1",
@@ -360,11 +431,11 @@ namespace GStreamerDotNetTest
             //////"rtsp://admin:opticis031!@192.168.10.132/hdmi1",
             //////"rtsp://admin:opticis031!@192.168.10.133/hdmi1", 
             //////"rtsp://admin:opticis031!@192.168.10.134/hdmi1", 
-                       
+                        
             //"image://C:/shared/file/1.jpg",
         };
-                             
-        int cnt =1; 
+        int dd = 0;          
+        int cnt =16; 
         int shiftnum = 0;
         private Timer _timer;
         bool isStart = false;
@@ -438,21 +509,21 @@ namespace GStreamerDotNetTest
             stopwatch.Start();   
             SourceManagerWrapper.GetOrCreateSource("fakesrc://");
             //SourceManagerWrapper.GetOrCreateSource(urls[0]);
-            //// 1. 모든 URL에 대한 SSP(Shared Source Pipeline) 병렬 생성
-            //var sspTasks = new List<Task>();
-            //for (int i = Idx1; i < urls.Length; i++)
-            //{
-            //    int idx = i;
-            //    sspTasks.Add(Task.Run(() => 
-            //    {  
-            //        // SSP 생성 (SSP는 내부적으로 RTSP 혹은 fakesrc:// 구분)
-            //        IntPtr sspPipelinePtr = SourceManagerWrapper.GetOrCreateSource(urls[idx]);
-            //        Debug.WriteLine("[DEBUG] SSP created for: {0}", urls[idx]);
-            //        //SourceManagerWrapper.toggleMute(urls[idx]);
+            // 1. 모든 URL에 대한 SSP(Shared Source Pipeline) 병렬 생성
+            var sspTasks = new List<Task>();
+            for (int i = Idx1; i < urls.Length; i++)
+            {
+                int idx = i;
+                sspTasks.Add(Task.Run(() =>
+                {
+                    // SSP 생성 (SSP는 내부적으로 RTSP 혹은 fakesrc:// 구분)
+                    IntPtr sspPipelinePtr = SourceManagerWrapper.GetOrCreateSource(urls[idx]);
+                    Debug.WriteLine("[DEBUG] SSP created for: {0}", urls[idx]);
+                    //SourceManagerWrapper.toggleMute(urls[idx]);
 
-            //    })); 
-            //    await Task.WhenAll(sspTasks);
-            //}
+                }));
+                await Task.WhenAll(sspTasks);
+            }
             //SourceManagerWrapper.GetOrCreateSource(urls[0]);
             // 1. 모든 URL에 대한 SSP(Shared Source Pipeline) 병렬 생성
             //var sspTasks = new List<Task>();
@@ -591,7 +662,7 @@ namespace GStreamerDotNetTest
 
             else
             {
-                SourceManagerWrapper.setInfo();
+                //SourceManagerWrapper.setInfo();
 
                 for (int i = 0; i < cb.getCnt(); i++)
                 {
@@ -599,9 +670,10 @@ namespace GStreamerDotNetTest
 
                     attachTasks.Add(Task.Run(() =>
                     {
+                        //SourceManagerWrapper.GetOrCreateSource(urls[idx % urls.Length]);
                         //cb.SetWindow(idx + Idx0 + shiftnum, false);
 
-                        cb.setConsumerbin(idx, urls[idx % urls.Length]);
+                        cb.setConsumerbin(idx, urls[(idx+dd) % urls.Length]);
 
                     }));
                     cb.SetWindow(idx, true);
@@ -659,6 +731,8 @@ namespace GStreamerDotNetTest
             //{
             //    MessageBox.Show("플레이 중 오류 발생: " + ex.Message);
             //}
+
+            dd += 8;
         }
 
         // 버튼 클릭: RTSP 분기로 detach 후 fakesrc(raw branch)로 재attach 전환

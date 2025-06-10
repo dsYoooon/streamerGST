@@ -7,6 +7,7 @@ using namespace System;
 namespace GStreamerWrapperCLI {
 
     public ref class SourceManagerWrapper {
+
     public:
         static IntPtr GetOrCreateSource(String^ rtspUrl) {
             msclr::interop::marshal_context context;
@@ -87,148 +88,154 @@ namespace GStreamerWrapperCLI {
         static void setWarning() {
             gst_debug_set_default_threshold(GST_LEVEL_WARNING);
         }
-        // 새롭게 수정된 AttachConsumerBin: sinkBinPtr는 새 sink bin (Consumer bin)이고, useRTSPBranch에 따라 RTSP용 또는 VideoTest용 분기를 선택함.
         static bool AttachConsumerBin(String^ rtspUrl, IntPtr sinkBinPtr, bool useRTSPBranch) {
             msclr::interop::marshal_context context;
             std::string url = context.marshal_as<std::string>(rtspUrl);
-            SharedSourcePipeline* pipeline = SourceManager::Instance().GetOrCreateSource(url);
-            if (!pipeline) {
-                g_printerr("Failed to get SSP for URL: %s\n", url.c_str());
-                return false;
-            }
-            GstElement* sspPipeline = pipeline->GetPipeline();
-            if (!sspPipeline) {
-                g_printerr("SSP pipeline is null for URL: %s\n", url.c_str());
-                return false;
-            }
             GstElement* sinkBin = static_cast<GstElement*>(sinkBinPtr.ToPointer());
-            if (!sinkBin) {
-                g_printerr("Sink bin pointer is null.\n");
-                return false;
-            }
-            //GstElement* sink = gst_bin_get_by_name(GST_BIN(sinkBin), "d3d11videosink");
-            g_printerr("attach for URL: %s\n", url.c_str());
-            // URL을 통한 소스타입 판단
-            bool isRtsp = (url.find("rtsp://") != std::string::npos);
-            bool isVideo = (url.find("video://") != std::string::npos);
-            bool isFake = (url.find("fakesrc://") != std::string::npos);
-            bool isImage = (url.find("image://") != std::string::npos);
-            bool isCapture = (url.find("capture://") 
-                != std::string::npos);
-            //if (!isFake)
-                //gst_element_set_state(sinkBin, GST_STATE_NULL);
-            //const char* teeName = nullptr;
-            //const char* branchSinkName = nullptr;
-            //const char* inName = nullptr;
-            const gchar* tee_name = nullptr;
-            const gchar* ghost_pad = nullptr;
+            return SourceManager::Instance().AttachConsumerBin(url, sinkBin, useRTSPBranch);
+        }
+        // 새롭게 수정된 AttachConsumerBin: sinkBinPtr는 새 sink bin (Consumer bin)이고, useRTSPBranch에 따라 RTSP용 또는 VideoTest용 분기를 선택함.
+        //static bool AttachConsumerBin(String^ rtspUrl, IntPtr sinkBinPtr, bool useRTSPBranch) {
+        //    msclr::interop::marshal_context context;
+        //    std::string url = context.marshal_as<std::string>(rtspUrl);
+        //    SharedSourcePipeline* pipeline = SourceManager::Instance().GetOrCreateSource(url);
+        //    if (!pipeline) {
+        //        g_printerr("Failed to get SSP for URL: %s\n", url.c_str());
+        //        return false;
+        //    }
+        //    GstElement* sspPipeline = pipeline->GetPipeline();
+        //    if (!sspPipeline) {
+        //        g_printerr("SSP pipeline is null for URL: %s\n", url.c_str());
+        //        return false;
+        //    }
+        //    GstElement* sinkBin = static_cast<GstElement*>(sinkBinPtr.ToPointer());
+        //    if (!sinkBin) {
+        //        g_printerr("Sink bin pointer is null.\n");
+        //        return false;
+        //    }
+        //    //GstElement* sink = gst_bin_get_by_name(GST_BIN(sinkBin), "d3d11videosink");
+        //    g_printerr("attach for URL: %s\n", url.c_str());
+        //    // URL을 통한 소스타입 판단
+        //    bool isRtsp = (url.find("rtsp://") != std::string::npos);
+        //    bool isVideo = (url.find("video://") != std::string::npos);
+        //    bool isFake = (url.find("fakesrc://") != std::string::npos);
+        //    bool isImage = (url.find("image://") != std::string::npos);
+        //    bool isCapture = (url.find("capture://") 
+        //        != std::string::npos);
+        //    //if (!isFake)
+        //        //gst_element_set_state(sinkBin, GST_STATE_NULL);
+        //    //const char* teeName = nullptr;
+        //    //const char* branchSinkName = nullptr;
+        //    //const char* inName = nullptr;
+        //    const gchar* tee_name = nullptr;
+        //    const gchar* ghost_pad = nullptr;
 
-            const gchar* sel = nullptr;
-            if (isRtsp ) {
-             
-                tee_name = "tee_rtsp_h264";
-                ghost_pad = "sink_rtsp_h264";
-                sel = "request_pad_rtsp_h264";
-            }
-            else if (isVideo) {
-                //gst_element_set_state(sinkBin, GST_STATE_READY);
-                tee_name = "tee_file_h264";
-                ghost_pad = "sink_file_h264";
-                sel = "request_pad_file_h264";
-            }
-                
-            else if ( isImage) {
-                tee_name = "tee_file_image";
-                ghost_pad = "sink_file_image";
-                sel = "request_pad_file_image";
-            }
-                
-            else {
-                tee_name = "tee_video_test"; // 기본값
-                ghost_pad = "sink_video_test";
-                sel = "request_pad_video_test";
-            }
-           
+        //    const gchar* sel = nullptr;
+        //    if (isRtsp ) {
+        //     
+        //        tee_name = "tee_rtsp_h264";
+        //        ghost_pad = "sink_rtsp_h264";
+        //        sel = "request_pad_rtsp_h264";
+        //    }
+        //    else if (isVideo) {
+        //        //gst_element_set_state(sinkBin, GST_STATE_READY);
+        //        tee_name = "tee_file_h264";
+        //        ghost_pad = "sink_file_h264";
+        //        sel = "request_pad_file_h264";
+        //    }
+        //        
+        //    else if ( isImage) {
+        //        tee_name = "tee_file_image";
+        //        ghost_pad = "sink_file_image";
+        //        sel = "request_pad_file_image";
+        //    }
+        //        
+        //    else {
+        //        tee_name = "tee_video_test"; // 기본값
+        //        ghost_pad = "sink_video_test";
+        //        sel = "request_pad_video_test";
+        //    }
+        //   
 
-            // sinkBin이 파이프라인에 추가되지 않았다면 추가
-            const gchar* sinkBinName = gst_element_get_name(sinkBin);
-            g_print("%s", sinkBinName);
-            if (!gst_bin_get_by_name(GST_BIN(sspPipeline), sinkBinName)) {
-                gst_bin_add(GST_BIN(sspPipeline), sinkBin);
-                gst_element_sync_state_with_parent(sinkBin);
-            }
-            //gst_debug_set_default_threshold(GST_LEVEL_INFO);
-            // 사용 분기에 따라 tee 이름 결정 
-            GstElement* tee = gst_bin_get_by_name(GST_BIN(sspPipeline), tee_name);
-            if (!tee) {
-                g_printerr("AttachConsumerBin: Unable to find tee element in pipeline\n");
-                return false;
-            }
+        //    // sinkBin이 파이프라인에 추가되지 않았다면 추가
+        //    const gchar* sinkBinName = gst_element_get_name(sinkBin);
+        //    g_print("%s", sinkBinName);
+        //    if (!gst_bin_get_by_name(GST_BIN(sspPipeline), sinkBinName)) {
+        //        gst_bin_add(GST_BIN(sspPipeline), sinkBin);
+        //        gst_element_sync_state_with_parent(sinkBin);
+        //    }
+        //    //gst_debug_set_default_threshold(GST_LEVEL_INFO);
+        //    // 사용 분기에 따라 tee 이름 결정 
+        //    GstElement* tee = gst_bin_get_by_name(GST_BIN(sspPipeline), tee_name);
+        //    if (!tee) {
+        //        g_printerr("AttachConsumerBin: Unable to find tee element in pipeline\n");
+        //        return false;
+        //    }
 
-            // AttachConsumerBin 함수 내 이전 티 패드 해제 부분 (URL 기준 판별)
-            GstPad* old_pad = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "last_tee_pad");
-            if (old_pad) {
-                // URL에 "video://" 또는 "rtsp://"가 포함된 경우에만 동적 패드로 간주하고 해제
-                if (url.find("video://") != std::string::npos || url.find("rtsp://") != std::string::npos) {
-                    g_print("AttachConsumerBin: Releasing previous tee pad\n");
-                    gst_element_release_request_pad(tee, old_pad);
-                }
-                g_object_set_data(G_OBJECT(sinkBin), "last_tee_pad", NULL);
-                //gst_object_unref(old_pad);
-            }
-            
-            // 새로운 tee 패드 요청
-            GstPad* tee_req = gst_element_request_pad_simple(tee, "src_%u");
-            if (!tee_req) {
-                g_printerr("AttachConsumerBin: Failed to request pad from tee\n");
-                gst_object_unref(tee);
-                return false;
-            }
-            g_object_set_data(G_OBJECT(sinkBin), "last_tee_pad", tee_req);
-            // 6) teeReq → consumerBin ghost-pad 직접 연결
-            GstPad* sinkPad = gst_element_get_static_pad(sinkBin, ghost_pad);
-            if (!sinkPad) {
-                gst_element_release_request_pad(tee, tee_req);
-                gst_object_unref(tee);
-                return false;
-            }
-            if (gst_pad_link(tee_req, sinkPad) != GST_PAD_LINK_OK) {
-                gst_object_unref(sinkPad);
-                gst_element_release_request_pad(tee, tee_req);
-                gst_object_unref(tee);
-                return false;
-            }
-            gst_object_unref(sinkPad);
+        //    // AttachConsumerBin 함수 내 이전 티 패드 해제 부분 (URL 기준 판별)
+        //    GstPad* old_pad = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "last_tee_pad");
+        //    if (old_pad) {
+        //        // URL에 "video://" 또는 "rtsp://"가 포함된 경우에만 동적 패드로 간주하고 해제
+        //        if (url.find("video://") != std::string::npos || url.find("rtsp://") != std::string::npos) {
+        //            g_print("AttachConsumerBin: Releasing previous tee pad\n");
+        //            gst_element_release_request_pad(tee, old_pad);
+        //        }
+        //        g_object_set_data(G_OBJECT(sinkBin), "last_tee_pad", NULL);
+        //        //gst_object_unref(old_pad);
+        //    }
+        //    
+        //    // 새로운 tee 패드 요청
+        //    GstPad* tee_req = gst_element_request_pad_simple(tee, "src_%u");
+        //    if (!tee_req) {
+        //        g_printerr("AttachConsumerBin: Failed to request pad from tee\n");
+        //        gst_object_unref(tee);
+        //        return false;
+        //    }
+        //    g_object_set_data(G_OBJECT(sinkBin), "last_tee_pad", tee_req);
+        //    // 6) teeReq → consumerBin ghost-pad 직접 연결
+        //    GstPad* sinkPad = gst_element_get_static_pad(sinkBin, ghost_pad);
+        //    if (!sinkPad) {
+        //        gst_element_release_request_pad(tee, tee_req);
+        //        gst_object_unref(tee);
+        //        return false;
+        //    }
+        //    if (gst_pad_link(tee_req, sinkPad) != GST_PAD_LINK_OK) {
+        //        gst_object_unref(sinkPad);
+        //        gst_element_release_request_pad(tee, tee_req);
+        //        gst_object_unref(tee);
+        //        return false;
+        //    }
+        //    gst_object_unref(sinkPad);
 
-            // input-selector에서 활성화할 패드 설정 (여기서는 기존 코드 그대로)
-            GstElement* input_selector = gst_bin_get_by_name(GST_BIN(sinkBin), "input_selector");
-            if (input_selector) {
-                GstPad* active_in = (GstPad*)g_object_get_data(G_OBJECT(sinkBin),sel);
-                if (active_in) {
-                    g_object_set(input_selector, "active-pad", active_in, NULL);
-                }
-                gst_object_unref(input_selector);
-            }
-            //if(!isFake)
-            gst_element_set_state(sspPipeline, GST_STATE_PLAYING);
-            gst_element_sync_state_with_parent(sinkBin);
+        //    // input-selector에서 활성화할 패드 설정 (여기서는 기존 코드 그대로)
+        //    GstElement* input_selector = gst_bin_get_by_name(GST_BIN(sinkBin), "input_selector");
+        //    if (input_selector) {
+        //        GstPad* active_in = (GstPad*)g_object_get_data(G_OBJECT(sinkBin),sel);
+        //        if (active_in) {
+        //            g_object_set(input_selector, "active-pad", active_in, NULL);
+        //        }
+        //        gst_object_unref(input_selector);
+        //    }
+        //    //if(!isFake)
+        //    gst_element_set_state(sspPipeline, GST_STATE_PLAYING);
+        //    gst_element_sync_state_with_parent(sinkBin);
    
-            g_print("AttachConsumerBin: Consumer bin successfully attached to %s pipeline.\n",
-                useRTSPBranch ? "RTSP" : "VideoTest");
-            gst_object_unref(tee);
-            //gst_object_unref(sink);
-            if (isVideo) {
-                //Sleep(100);
-                gst_element_seek_simple(GST_ELEMENT(sspPipeline), GST_FORMAT_TIME,  (GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT), 0);
-                
-            }
-            //gst_object_unref(sink);
-           // gst_object_unref(sinkBin);
+        //    g_print("AttachConsumerBin: Consumer bin successfully attached to %s pipeline.\n",
+        //        useRTSPBranch ? "RTSP" : "VideoTest");
+        //    gst_object_unref(tee);
+        //    //gst_object_unref(sink);
+        //    if (isVideo) {
+        //        //Sleep(100);
+        //        gst_element_seek_simple(GST_ELEMENT(sspPipeline), GST_FORMAT_TIME,  (GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT), 0);
+        //        
+        //    }
+        //    //gst_object_unref(sink);
+        //   // gst_object_unref(sinkBin);
 
       
-         
-            return true;
-        }
+        // 
+        //    return true;
+        //}
         static bool IsConsumerBinAttached(String^ rtspUrl, IntPtr sinkBinPtr) {
             msclr::interop::marshal_context context;
             std::string url = context.marshal_as<std::string>(rtspUrl);
@@ -305,7 +312,9 @@ namespace GStreamerWrapperCLI {
             return true;
         }
         static bool AutoDetachConsumerBin(IntPtr sinkBinPtr) {
+            
             GstElement* sinkBin = static_cast<GstElement*>(sinkBinPtr.ToPointer());
+            return SourceManager::Instance().AutoDetachConsumerBin(sinkBin);
             if (!sinkBin) {
                 g_printerr("AutoDetachConsumerBin: Sink bin is null.\n");
                 return false;

@@ -19,6 +19,9 @@ public:
     void CheckTee(const std::string& rtspUrl);
     void ToggleMute(const std::string& rtspUrl);
     void SetVolume(const std::string& rtspUrl, double vol);
+    bool AttachConsumerBin(const std::string& rtspUrl, GstElement* sinkBin, bool useRTSPBranch);
+    bool DetachConsumerBin(GstElement* sinkBin);
+    bool AutoDetachConsumerBin(GstElement* sinkBin);
     
 private:
     SourceManager();
