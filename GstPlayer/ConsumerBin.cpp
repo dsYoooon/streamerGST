@@ -11,7 +11,7 @@
 #include <cstdio>
 
 // 전역적으로 FPS 표시 on/off 여부 (true: 표시, false: 미표시)
-static std::atomic_bool g_showFps(true);
+static std::atomic_bool g_showFps(false);
 static bool qcapOk = false;
 // FPS 측정을 위한 데이터 구조체 (pad probe callback에서 사용)
 struct FpsData {
@@ -53,8 +53,8 @@ static void set_queue_limits(GstElement* q) {
     g_object_set(q,
         "max-size-buffers", 0,
         "max-size-bytes", 0,
-        "max-size-time", 350 * GST_MSECOND,
-        //"leaky", 1, 
+        "max-size-time", 500 * GST_MSECOND,
+        "leaky", 2, 
         NULL);
 }
 ConsumerBin::ConsumerBin(int left, int top, int width, int height, int zorder)
@@ -144,7 +144,7 @@ bool ConsumerBin::Init() {
         g_printerr("Failed to create consumer bin.\n");
         return false;
     }
-    
+    //gst_debug_set_threshold_for_name("tee", GST_LEVEL_DEBUG);
     //videotestsrc branch
     //GstElement* vt_src = gst_element_factory_make("videotestsrc", "vt_src");
     GstElement* vt_queue = gst_element_factory_make("queue", "vt_que");
@@ -154,8 +154,11 @@ bool ConsumerBin::Init() {
     GstElement* parser = gst_element_factory_make("h264parse", "h264_parse");
     GstElement* dec = SetDec(localIndex, "rtsp_h264_dec");
     GstElement* conv = gst_element_factory_make("videoconvert", "vconv");
+    GstElement* rtspCapsFilter = gst_element_factory_make("capsfilter", "capsfilter_rtsp");
 
-
+    GstCaps* rtspcaps = gst_caps_from_string("video/x-raw, format=NV12");
+    g_object_set(rtspCapsFilter, "caps", rtspcaps, NULL);
+    gst_caps_unref(rtspcaps);
     // ■ FILE video branch
     GstElement* q_file = gst_element_factory_make("queue", "video_q_file");
     GstElement* parsef = gst_element_factory_make("h264parse", "h264_parse_file");
@@ -167,8 +170,11 @@ bool ConsumerBin::Init() {
     // capture branch
     GstElement* qc = gst_element_factory_make("queue", "vq_cap");
     GstElement* vc = gst_element_factory_make("videoconvert", "cap_conv");
-    
-    
+    GstElement* CaptureCapsFilter = gst_element_factory_make("capsfilter", "capsfilter_rtsp");
+
+    GstCaps* CaptureCapsFiltercaps = gst_caps_from_string("video/x-raw, format=NV12");
+    g_object_set(CaptureCapsFilter, "caps", CaptureCapsFiltercaps, NULL);
+    gst_caps_unref(CaptureCapsFiltercaps);
     GstElement* input_selector = gst_element_factory_make("input-selector", "input_selector");
 
     //downstream
@@ -176,15 +182,15 @@ bool ConsumerBin::Init() {
     GstElement* identity = gst_element_factory_make("identity", "identity");
     GstElement* overlay = gst_element_factory_make("textoverlay", "overlay");
     GstElement* sink = gst_element_factory_make("d3d11videosink", "d3d11videosink");
-    //GstElement* sink = gst_element_factory_make("fakesink", "d3d11videosink");
+    GstElement* fsink = gst_element_factory_make("fpsdisplaysink", "fps");
     if (
         //!vt_src ||
         !vt_queue 
-        ||!q_rtsp || !parser || !dec || !conv
+        ||!q_rtsp || !parser || !dec || !conv || !rtspCapsFilter
         || !q_file || !parsef || !decf || !convf
-        || !qc || !vc
+        || !qc || !vc || !CaptureCapsFilter
         || !image_queue
-        || !input_selector || !vq_out || !identity || !overlay || !sink 
+        || !input_selector || !vq_out || !identity || !overlay || !sink || !fsink
         )
     {
         g_printerr("consumer_bin 요소 생성 실패\n");
@@ -199,7 +205,7 @@ bool ConsumerBin::Init() {
         "max-size-buffers", 0,
         "max-size-bytes", 0,
         "max-size-time", 2000 * GST_MSECOND,
-        "leaky", 1, 
+        "leaky", 2, 
         NULL);
     set_queue_limits(vq_out);
     set_queue_limits(image_queue);
@@ -210,7 +216,7 @@ bool ConsumerBin::Init() {
         "halignment", 2,
         "valignment", 3,
         NULL);
-        
+    g_object_set(fsink, "video-sink", sink, "sync", FALSE, "fps-update-interval", 1000, NULL);
     g_object_set(G_OBJECT(sink),
         "enable-last-sample", false,
         //"force-aspect-ratio", false,
@@ -218,26 +224,30 @@ bool ConsumerBin::Init() {
         "render-delay", 0,
         "max-lateness", 0,
         NULL);
-
-    gst_bin_add_many(GST_BIN(consumerBin_), input_selector, vq_out, identity, overlay, sink, NULL);
+    
+    gst_bin_add_many(GST_BIN(consumerBin_), input_selector, vq_out, identity, overlay, fsink, sink, NULL);
     gst_bin_add_many(GST_BIN(consumerBin_), image_queue
         , q_file, parsef, decf, convf
         , q_rtsp, parser, dec, conv
+        //, rtspCapsFilter
         //비디오테스트소스 추후
         //, vt_src
         , vt_queue
         , NULL);
     if (qcapOk) {
-        gst_bin_add_many(GST_BIN(consumerBin_), qc, vc,  NULL);
+        gst_bin_add_many(GST_BIN(consumerBin_), qc, vc, 
+            //CaptureCapsFilter,
+            NULL);
     }
     //videotest 추후
     //gst_element_link_many(vt_src, vt_queue, nullptr);
 
 
     //gst_element_link_pads(vt_queue, "src", input_selector, "sink_0");
-    gst_element_link_many(input_selector, vq_out, identity, 
-        overlay, 
-        sink, NULL);
+    gst_element_link_many(input_selector, vq_out,
+        //identity, 
+        //overlay, 
+        fsink, NULL);
 
 
     // RTSP video → selector
@@ -331,27 +341,27 @@ bool ConsumerBin::Init() {
     
     // --- 새로 추가: pad probe를 통한 FPS 측정 ---
     // overlay의 src pad에 pad probe를 등록합니다.
-    GstPad* probePad = gst_element_get_static_pad(overlay, "src");
-    if (probePad) {
-        // FpsData 구조체 초기화
-        FpsData* fpsData = new FpsData;
-        fpsData->overlay = overlay;
-        fpsData->lastTime = g_get_monotonic_time();
-        fpsData->frameCount = 0;
-        guint probe_id = gst_pad_add_probe(probePad, GST_PAD_PROBE_TYPE_BUFFER, fps_probe_callback, fpsData, NULL);
-        // probe_id를 나중에 제거할 수 있도록 저장
-        g_object_set_data(
-            G_OBJECT(consumerBin_),
-            "fps_probe_id",
-            GUINT_TO_POINTER(probe_id)
-        );
-        gst_object_unref(probePad);
-        // fpsData 해제는 Shutdown()에서 처리
-        g_object_set_data(G_OBJECT(consumerBin_), "fps_data", fpsData);
-    }
-    else {
-        g_printerr("Failed to get overlay src pad for FPS probe.\n");
-    }
+    //GstPad* probePad = gst_element_get_static_pad(overlay, "src");
+    //if (probePad) {
+    //    // FpsData 구조체 초기화
+    //    FpsData* fpsData = new FpsData;
+    //    fpsData->overlay = overlay;
+    //    fpsData->lastTime = g_get_monotonic_time();
+    //    fpsData->frameCount = 0;
+    //    guint probe_id = gst_pad_add_probe(probePad, GST_PAD_PROBE_TYPE_BUFFER, fps_probe_callback, fpsData, NULL);
+    //    // probe_id를 나중에 제거할 수 있도록 저장
+    //    g_object_set_data(
+    //        G_OBJECT(consumerBin_),
+    //        "fps_probe_id",
+    //        GUINT_TO_POINTER(probe_id)
+    //    );
+    //    gst_object_unref(probePad);
+    //    // fpsData 해제는 Shutdown()에서 처리
+    //    g_object_set_data(G_OBJECT(consumerBin_), "fps_data", fpsData);
+    //}
+    //else {
+    //    g_printerr("Failed to get overlay src pad for FPS probe.\n");
+    //}
     //gst_debug_set_default_threshold(GST_LEVEL_ERROR);
     return true;
 }

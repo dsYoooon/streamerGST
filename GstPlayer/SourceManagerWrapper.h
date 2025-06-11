@@ -83,7 +83,7 @@ namespace GStreamerWrapperCLI {
                 //pipeline->SetPlay();
         }
         static void setInfo() {
-            gst_debug_set_default_threshold(GST_LEVEL_INFO);
+            gst_debug_set_default_threshold(GST_LEVEL_DEBUG);
         } 
         static void setWarning() {
             gst_debug_set_default_threshold(GST_LEVEL_WARNING);
@@ -251,6 +251,7 @@ namespace GStreamerWrapperCLI {
             
             // sinkBin이 이미 sspPipeline에 존재하는지 이름으로 확인합니다.
             const gchar* sinkBinName = gst_element_get_name(sinkBin);
+            g_print("\nSINKBIN : %s\n", sinkBinName);
             GstElement* found = gst_bin_get_by_name(GST_BIN(sspPipeline), sinkBinName);
             bool result = (found != NULL);
             if (found) {

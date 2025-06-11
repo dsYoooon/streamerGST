@@ -153,6 +153,7 @@ bool SourceManager::AttachConsumerBin(const std::string& rtspUrl, GstElement* si
     gst_object_unref(sinkPad);
 
     if (GstElement* input_selector = gst_bin_get_by_name(GST_BIN(sinkBin), "input_selector")) {
+        g_object_set(input_selector, "active-pad", NULL, NULL);
         GstPad* active_in = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), sel);
         if (active_in) {
             g_object_set(input_selector, "active-pad", active_in, NULL);
@@ -256,7 +257,7 @@ bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
         gst_object_unref(parentObj);
         return false;
     }
-
+    //gst_element_set_state(sinkBin, GST_STATE_NULL);
     g_print("AutoDetachConsumerBin: Successfully detached sinkbin from pipeline.\n");
     return true;
 }

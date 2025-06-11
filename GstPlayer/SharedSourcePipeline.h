@@ -20,12 +20,14 @@ struct CaptureData {
     GstBufferPool* videoPool;
     GstAppSrc* audioSrc;
     GstBufferPool* audioPool;
+    double lastSampleTime = 0.0;
 
     // 새로 추가
     double   videoBaseTime = -1.0;  // 첫 프레임 SampleTime
     guint64  videoLastPts = 0;     // 직전 PTS
     double   audioBaseTime = -1.0;  // 첫 프레임 SampleTime
     guint64  audioLastPts = 0;     // 직전 PTS
+
 };
 
 
@@ -95,6 +97,9 @@ private:
     PFN_QCAP_STOP                 fQ_STOP = nullptr;
     PFN_QCAP_DESTROY              fQ_DESTROY = nullptr;
     CaptureData* captureData_ = nullptr;
+    std::thread mainLoopThread;
+    GMainLoop* mainLoop_ = nullptr;
+    GMainContext* mainCont = nullptr;
 
 };
 
