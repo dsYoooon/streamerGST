@@ -33,5 +33,13 @@ private:
     std::mutex mutex_;
     std::map<std::string, SharedSourcePipeline*> sources_;
 };
-
+// D3D 장치를 관리할 클래스 또는 네임스페이스
+class D3DManager {
+public:
+    static GstDevice* GetSharedD3D11Device();
+private:
+    static void EnsureD3D11Device();
+    static GstDevice* shared_d3d_device;
+    static std::once_flag init_flag;
+};
 #endif // SOURCE_MANAGER_H

@@ -9,7 +9,7 @@
 #include <Windows.h>
 #include <atomic>
 #include <cstdio>
-
+#include "d3dManager.h"
 // 전역적으로 FPS 표시 on/off 여부 (true: 표시, false: 미표시)
 static std::atomic_bool g_showFps(false);
 static bool qcapOk = false;
@@ -51,10 +51,10 @@ static std::atomic<int> consumerCounter{ 0 };
 static std::atomic<int> globalConsumerDecoderIndex{ 0 };
 static void set_queue_limits(GstElement* q) {
     g_object_set(q,
-        "max-size-buffers", 0,
+        //"max-size-buffers", 10,
         "max-size-bytes", 0,
-        "max-size-time", 500 * GST_MSECOND,
-        "leaky", 2, 
+        "max-size-time", 0,
+        //"leaky", 2, 
         NULL);
 }
 ConsumerBin::ConsumerBin(int left, int top, int width, int height, int zorder)
@@ -120,11 +120,11 @@ GstElement* SetDec(int localIndex,const char* name) {
     switch (localIndex % 3) {
     case 0: dec = gst_element_factory_make("nvh264device1dec", name); 
         break;
-    case 1: dec = gst_element_factory_make("nvh264dec", name); 
+    case 1: dec = gst_element_factory_make("nvh264device2dec", name); 
         break;
     case 2: dec = gst_element_factory_make("nvh264device3dec", name); 
         break;
-    case 3: dec = gst_element_factory_make("nvh264device2dec", name); 
+    case 3: dec = gst_element_factory_make("nvh264dec", name); 
         break;
     default: dec = gst_element_factory_make("nvh264dec", name); 
         break;
@@ -144,7 +144,10 @@ bool ConsumerBin::Init() {
         g_printerr("Failed to create consumer bin.\n");
         return false;
     }
-    //gst_debug_set_threshold_for_name("tee", GST_LEVEL_DEBUG);
+    // … 어딘가 Init 직후
+   
+
+    //gst_debug_set_threshold_for_name("basesink", GST_LEVEL_DEBUG);
     //videotestsrc branch
     //GstElement* vt_src = gst_element_factory_make("videotestsrc", "vt_src");
     GstElement* vt_queue = gst_element_factory_make("queue", "vt_que");
@@ -153,6 +156,7 @@ bool ConsumerBin::Init() {
     GstElement* q_rtsp = gst_element_factory_make("queue", "video_q_rtsp");
     GstElement* parser = gst_element_factory_make("h264parse", "h264_parse");
     GstElement* dec = SetDec(localIndex, "rtsp_h264_dec");
+    //GstElement* dec = gst_element_factory_make("d3d11h264dec", "rtsp_h264_dec");
     GstElement* conv = gst_element_factory_make("videoconvert", "vconv");
     GstElement* rtspCapsFilter = gst_element_factory_make("capsfilter", "capsfilter_rtsp");
 
@@ -182,6 +186,22 @@ bool ConsumerBin::Init() {
     GstElement* identity = gst_element_factory_make("identity", "identity");
     GstElement* overlay = gst_element_factory_make("textoverlay", "overlay");
     GstElement* sink = gst_element_factory_make("d3d11videosink", "d3d11videosink");
+    //if (sink) {
+    //    GstD3D11Device* dev = D3D11Manager::Instance().GetDevice();
+    //    if (dev) {
+    //        GstContext* ctx = gst_d3d11_context_new(dev);
+    //        if (!gst_d3d11_handle_set_context(sink, ctx, -1, NULL)) {
+    //            g_printerr("Failed to set D3D11 context on sink\n");
+    //        }
+    //        gst_context_unref(ctx);
+    //    }
+    //    else {
+    //        g_printerr("D3D11 device is null\n");
+    //    }
+    //}
+    //D3DManager::Instance().InjectContext(sink);
+
+    //GstElement* sink = gst_element_factory_make("d3d11videosink", "d3d11videosink");
     GstElement* fsink = gst_element_factory_make("fpsdisplaysink", "fps");
     if (
         //!vt_src ||
@@ -196,7 +216,7 @@ bool ConsumerBin::Init() {
         g_printerr("consumer_bin 요소 생성 실패\n");
         return false;
     }
-
+ 
     set_queue_limits(qc);
     set_queue_limits(vt_queue);
     set_queue_limits(q_rtsp);
@@ -220,7 +240,7 @@ bool ConsumerBin::Init() {
     g_object_set(G_OBJECT(sink),
         "enable-last-sample", false,
         //"force-aspect-ratio", false,
-        "sync", TRUE,
+        "sync", false,
         "render-delay", 0,
         "max-lateness", 0,
         NULL);
@@ -252,8 +272,10 @@ bool ConsumerBin::Init() {
 
     // RTSP video → selector
     gst_element_link_many(q_rtsp,
-        parser,
-        dec, conv, NULL);
+        //parser,
+        dec, 
+        conv, 
+        NULL);
     GstPad* video_rtsp_sel_pad = gst_element_request_pad_simple(input_selector, "sink_%u");
     {
         GstPad* s = gst_element_get_static_pad(conv, "src");

@@ -22,5 +22,10 @@
 
         <Label Content="Height:" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="410,120,0,0"/>
         <TextBox x:Name="HeightInput" Width="50" Height="25" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="470,120,0,0"/>
+        <TextBox x:Name="IdxInput" Width="50" Height="25" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="153,0,0,0"/>
+        <Label Content="idx:" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="120,0,0,0"/>
+        <Button Content="Null" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,200,0,0" Width="100" Height="30" Click="Button_Null_Click"/>
+        <Button Content="Ready" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,235,0,0" Width="100" Height="30" Click="Button_Ready_Click"/>
+        <Button Content="Play" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,270,0,0" Width="100" Height="30" Click="Button_Play_Click"/>
     </Grid>
 </Window>

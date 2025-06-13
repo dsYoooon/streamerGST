@@ -81,7 +81,7 @@ bool SourceManager::AttachConsumerBin(const std::string& rtspUrl, GstElement* si
         g_printerr("AttachConsumerBin: SSP pipeline is null for %s\n", rtspUrl.c_str());
         return false;
     }
-
+    gst_element_set_state(GST_ELEMENT(sspPipeline), GST_STATE_PLAYING);
     // logic moved from managed wrapper
     const gchar* tee_name = nullptr;
     const gchar* ghost_pad = nullptr;
@@ -257,6 +257,7 @@ bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
         gst_object_unref(parentObj);
         return false;
     }
+    gst_element_set_state(GST_ELEMENT(sspPipeline), GST_STATE_PAUSED);
     //gst_element_set_state(sinkBin, GST_STATE_NULL);
     g_print("AutoDetachConsumerBin: Successfully detached sinkbin from pipeline.\n");
     return true;

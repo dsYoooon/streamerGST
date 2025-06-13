@@ -147,8 +147,8 @@ namespace GStreamerDotNetTest
             consumer.ShowWin(true); 
             SourceManagerWrapper.AttachConsumerBin("fakesrc://", consumer.GetBin(), true);
 
-            SourceManagerWrapper.AutoDetachConsumerBin(consumer.GetBin());
-            SourceManagerWrapper.AttachConsumerBin(src, consumer.GetBin(), true);
+            //SourceManagerWrapper.AutoDetachConsumerBin(consumer.GetBin());
+            //SourceManagerWrapper.AttachConsumerBin(src, consumer.GetBin(), true);
         }
         public static void checktee(int idx)
         {
@@ -193,7 +193,7 @@ namespace GStreamerDotNetTest
                 //    return null; // 실패 시 null 반환
                 //}));
                 ConsumerBinWrapper consumer = new ConsumerBinWrapper(
-                        (idx / 4) * width, (idx % 4) * height, width,
+                        ((idx+0) / 4 ) * width, (idx % 4) * height, width,
                         height, idx);
 
                 consumer.Init(); // Init()이 내부적으로 GStreamer 파이프라인을 초기화한다면
@@ -247,7 +247,7 @@ namespace GStreamerDotNetTest
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
         struct MONITORINFOEX
-        {  
+        {
             public int cbSize;
             public RECT rcMonitor;
             public RECT rcWork;
@@ -257,15 +257,15 @@ namespace GStreamerDotNetTest
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        struct RECT 
+        struct RECT
         {
             public int Left;
             public int Top;
             public int Right;
             public int Bottom;
-        }  
-          
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]  
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
         struct DISPLAY_DEVICE
         {
             public uint cb;
@@ -281,7 +281,7 @@ namespace GStreamerDotNetTest
         }
 
         private CancellationTokenSource changeUrlCts;
-        
+
 
         int _idx1 = 0, _idx2 = 0;
         int Idx0 { get { return _idx1; } }
@@ -289,7 +289,7 @@ namespace GStreamerDotNetTest
         //private List<GStreamerPlayer> _players = new List<GStreamerPlayer>();
         string[] nUrls =
         {
-            
+
             "rtsp://192.168.10.22:10554/screen1",
             "rtsp://192.168.10.23:10554/screen1",
             "rtsp://192.168.10.24:10554/screen1",
@@ -298,39 +298,40 @@ namespace GStreamerDotNetTest
             "rtsp://192.168.10.27:10554/screen1",
         };
         string[] urls = {
-       "capture://SC0710 PCI,0",
-       "capture://SC0710 PCI,2",
+
+       //"capture://SC0710 PCI,0",
+       //"capture://SC0710 PCI,2",
 
 
 
-            "capture://SC0710 PCI,8",
-            "capture://SC0710 PCI,10",
-            "capture://SC0710 PCI,1",
-              //"capture://SC0710 PCI,3",
-          "capture://SC0710 PCI,5",
-            "capture://SC0710 PCI,6",
-            "capture://SC0710 PCI,7",
-            "capture://SC0710 PCI,9",
-            "capture://SC0710 PCI,11",
-            "capture://SC0710 PCI,4",
+       //     "capture://SC0710 PCI,8",
+       //     "capture://SC0710 PCI,10",
+       //     "capture://SC0710 PCI,1",
+       //       "capture://SC0710 PCI,3",
+       //   "capture://SC0710 PCI,5",
+       //     "capture://SC0710 PCI,6",
+       //     "capture://SC0710 PCI,7",
+       //     "capture://SC0710 PCI,9",
+       //     "capture://SC0710 PCI,11",
+       //     "capture://SC0710 PCI,4",
             "rtsp://192.168.10.21:10554/screen1",
             "rtsp://192.168.10.22:10554/screen1",
             "rtsp://192.168.10.23:10554/screen1",
             "rtsp://192.168.10.24:10554/screen1",
             "rtsp://192.168.10.25:10554/screen1",
-            //"rtsp://192.168.10.26:10554/screen1",
-            //"rtsp://192.168.10.27:10554/screen1",
-            ////"rtsp://admin:admin@192.168.10.125:554/hdmi1",
-            //  "rtsp://admin:admin@192.168.10.122:554/hdmi1",
-            //"rtsp://admin:admin@192.168.10.123:554/hdmi1",
-            //"rtsp://admin:admin@192.168.10.124:554/hdmi1",
+            "rtsp://192.168.10.26:10554/screen1",
+            "rtsp://192.168.10.27:10554/screen1",
+            //////"rtsp://admin:admin@192.168.10.125:554/hdmi1",
+            ////  "rtsp://admin:admin@192.168.10.122:554/hdmi1",
+            "rtsp://admin:admin@192.168.10.123:554/hdmi1",
+            "rtsp://admin:admin@192.168.10.124:554/hdmi1",
 
-            //            "rtsp://admin:opticis031!@192.168.10.66/Streaming/Channels/101",
-            //"rtsp://admin:opticis031!@192.168.10.69/Streaming/Channels/101",
-            //"rtsp://admin:opticis031!@192.168.10.70/Streaming/Channels/101",
-            //"rtsp://admin:opticis031!@192.168.10.72/Streaming/Channels/101",
-            //"rtsp://admin:opticis031!@192.168.10.75/Streaming/Channels/101",
-            //"rtsp://admin:opticis031!@192.168.10.76/Streaming/Channels/101",
+                        "rtsp://admin:opticis031!@192.168.10.66/Streaming/Channels/101",
+            "rtsp://admin:opticis031!@192.168.10.69/Streaming/Channels/101",
+            "rtsp://admin:opticis031!@192.168.10.70/Streaming/Channels/101",
+            "rtsp://admin:opticis031!@192.168.10.72/Streaming/Channels/101",
+            "rtsp://admin:opticis031!@192.168.10.75/Streaming/Channels/101",
+            "rtsp://admin:opticis031!@192.168.10.76/Streaming/Channels/101",
 
             //   "capture://SC0710 PCI,4",
             //"capture://SC0710 PCI,5",
@@ -450,8 +451,8 @@ namespace GStreamerDotNetTest
                         
             //"image://C:/shared/file/1.jpg",
         };
-        int dd = 0;          
-        int cnt =16; 
+        int dd = 0;
+        int cnt = 16;
         int shiftnum = 0;
         private Timer _timer;
         bool isStart = false;
@@ -462,67 +463,12 @@ namespace GStreamerDotNetTest
             Loaded += MainWindow_Loaded1;
             //_timer = new Timer(me, null, 0, 10000);
         }
-        private async void me(object s)
-        {
-            if (isStart)
-            {
-                var attachTasks = new List<Task>();
-                if (cb.getCnt() == 0)
-                {
-                    cb.NewConsumer("fakesrc://", 0, 0, 1920, 1080);
-                }
-                else
-                {
-
-
-                    for (int i = 0; i < cb.getCnt(); i++)
-                    {
-                        int idx = i;
-
-                        attachTasks.Add(Task.Run(() =>
-                        {
-                            //cb.SetWindow(idx + Idx0 + shiftnum, false);
-                            Application.Current.Dispatcher.BeginInvoke(new Action(() =>
-                            {
-                                cb.setConsumerbin(idx, urls[idx % urls.Length]);
-                            }));
-
-                        }));
-                        cb.SetWindow(idx, true);
-                        await Task.Delay(1);
-                    }
-                    await Task.WhenAll(attachTasks);
-                }
-                isStart = false;
-            }
-            if (isStop)
-            {
-                var dettachTasks = new List<Task>();
-                for (int i = 0; i < cnt; i++)
-                {
-                    int idx = i;
-                    dettachTasks.Add(Task.Run(() =>
-                    {
-                        //  cb.SetWindow(idx, true);
-                        //Application.Current.Dispatcher.BeginInvoke(new Action(() =>
-                        //{
-                        //    cb.setConsumerbin(idx, "fakesrc://");
-                        //}));
-
-                    }));
-                    cb.SetWindow(i, false);
-                    await Task.Delay(1);
-
-                }
-                await Task.WhenAll(dettachTasks);
-                isStop = false;
-            }
-        }
+     
         // MainWindow_Loaded1: SSP 및 ConsumerBin 초기화 후 fakesrc://에 attach
         private async void MainWindow_Loaded1(object sender, RoutedEventArgs e)
-        {   
+        {
             Stopwatch stopwatch = new Stopwatch();
-            stopwatch.Start();   
+            stopwatch.Start();
             SourceManagerWrapper.GetOrCreateSource("fakesrc://");
             //SourceManagerWrapper.GetOrCreateSource(urls[0]);
             // 1. 모든 URL에 대한 SSP(Shared Source Pipeline) 병렬 생성
@@ -571,17 +517,17 @@ namespace GStreamerDotNetTest
             await cb.init(cnt);
             Debug.WriteLine("fake attach end");
 
-             
+
             stopwatch.Stop();
             //SourceManagerWrapper.setInfo();
             //await cb.init(cnt);
-            
+
             //SourceManagerWrapper.setWarning();
             // Debug.WriteLine($"[DEBUG] StartPlay() 전체 실행 시간: {stopwatch.ElapsedMilliseconds} ms");
         }
-         
+
         // 예시: 다른 방식으로 플레이어 생성
-     
+
         private async void init()
         {
             Stopwatch stopwatch = new Stopwatch();
@@ -593,19 +539,19 @@ namespace GStreamerDotNetTest
             {
                 int idx = i;
                 sspTasks.Add(Task.Run(() =>
-                { 
+                {
                     // SSP 생성 (SSP는 내부적으로 RTSP 혹은 fakesrc:// 구분)
                     //IntPtr sspPipelinePtr = SourceManagerWrapper.GetOrCreateSource(urls[idx]);
                     //Debug.WriteLine("[DEBUG] SSP created for: {0}", urls[idx]);
                     //SourceManagerWrapper.toggleMute(urls[idx]);
-                    
+
                 }));
                 cb.NewConsumer(urls[idx], (idx / 2) * 960, (idx % 2) * 540,
 
                    960,
                    540);
                 //await Task.Delay(3367);
-                
+
             }
             await Task.WhenAll(sspTasks);
             Debug.WriteLine("[DEBUG] create end ssp");
@@ -663,18 +609,18 @@ namespace GStreamerDotNetTest
         }
 
         // 예시: 특정 스트림으로 ConsumerBin을 attach 후 스트림 재생
-        
+
 
 
         // 버튼 클릭: detach 후 RTSP 분기로 attach 전환
         private async void StartButton_Click(object sender, RoutedEventArgs e)
-        { 
+        {
             isStart = true;
             var attachTasks = new List<Task>();
-            if (cb.getCnt() == 0) 
+            if (cb.getCnt() == 0)
             {
-                int cc = cb.getCnt() ;
-                cb.NewConsumer(urls[Idx1 % urls.Length], (cc/4) *1920, (cc % 4) *1080, 1920, 1080);
+                int cc = cb.getCnt();
+                cb.NewConsumer(urls[Idx1 % urls.Length], (cc / 4) * 1920, (cc % 4) * 1080, 1920, 1080);
             }
 
             else
@@ -690,10 +636,10 @@ namespace GStreamerDotNetTest
                         //SourceManagerWrapper.GetOrCreateSource(urls[idx % urls.Length]);
                         //cb.SetWindow(idx + Idx0 + shiftnum, false);
 
-                        cb.setConsumerbin(idx, urls[(idx+dd) % urls.Length]);
-                        
-                       
-                        
+                        cb.setConsumerbin(idx, urls[(idx + dd) % urls.Length]);
+
+
+
                     }));
                     await Task.Delay(1);
 
@@ -701,20 +647,20 @@ namespace GStreamerDotNetTest
                 await Task.WhenAll(attachTasks);
             }
 
-            for (int i = 0; i < cb.getCnt(); i++)
-            {
-                int idx = i;
+            //for (int i = 0; i < cb.getCnt(); i++)
+            //{
+            //    int idx = i;
 
-                attachTasks.Add(Task.Run(() =>
-                {
-                    cb.SetWindow(idx, true);
-                    
+            //    attachTasks.Add(Task.Run(() =>
+            //    {
+            //        cb.SetWindow(idx, true);
 
-                }));
-                await Task.Delay(1);
 
-            }
-            await Task.WhenAll(attachTasks);
+            //    }));
+            //    await Task.Delay(1);
+
+            //}
+            //await Task.WhenAll(attachTasks);
             //SourceManagerWrapper.setInfo();
             //init();
             //for (int i = 0; i < urls.Length; i++)
@@ -795,17 +741,23 @@ namespace GStreamerDotNetTest
 
 
         }
-        
+
         private async void MoveButton_Click(object sender, RoutedEventArgs e)
         {
-            if(Idx0 > nUrls.Length)
+            if (Idx0 > nUrls.Length)
             {
                 return;
-            } 
-            cb.NewConsumer(nUrls[Idx0], ((Idx0+cnt) / 4) * 480, ((Idx1 + cnt) % 4) * 270,
+            }
+            SourceManagerWrapper.setInfo();
+            int x, y, w, h = 0;
+            x = int.Parse(XInput.Text);
+            y = int.Parse(YInput.Text);
+            w = int.Parse(WidthInput.Text);
+            h = int.Parse(HeightInput.Text);
+            cb.NewConsumer("fakesrc://", x, y,
 
-                   480,
-                   270);
+                   w,
+                   h);
         }
 
 
@@ -821,16 +773,16 @@ namespace GStreamerDotNetTest
                     //consumerBins[idx].CheckBin(idx); 
                 });
             });
-            detachTask.Wait(); 
+            detachTask.Wait();
             SourceManagerWrapper.CheckTee(urls[0]);
             //SourceManagerWrapper.CheckTee("fakesrc://");
         }
-         
-         
+
+
         private async void CustomStreamButton_Click(object sender, RoutedEventArgs e)
-        { 
-                 
-               
+        {
+
+
             var attachTasks = new List<Task>();
 #if play 
             for (int i = 0; i < urls.Length; i++)
@@ -854,10 +806,22 @@ namespace GStreamerDotNetTest
             GC.Collect();
             GC.WaitForPendingFinalizers();
 
-            
 
 
 
+
+        }
+        private async void Button_Null_Click(object sender, RoutedEventArgs e)
+        {
+            SourceManagerWrapper.SetNull(urls[0]);
+        }
+        private async void Button_Ready_Click(object sender, RoutedEventArgs e)
+        {
+            SourceManagerWrapper.SetReady(urls[0]);
+        }
+        private async void Button_Play_Click(object sender, RoutedEventArgs e)
+        {
+            SourceManagerWrapper.SetPlay(urls[0]);
         }
     }
 }

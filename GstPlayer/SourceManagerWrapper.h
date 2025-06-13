@@ -59,7 +59,7 @@ namespace GStreamerWrapperCLI {
                 return;
             }
             
-            gst_element_set_state(sspPipeline, GST_STATE_READY);
+            gst_element_set_state(sspPipeline, GST_STATE_PAUSED);
             
                 //pipeline->SetReady();
         }
@@ -77,13 +77,33 @@ namespace GStreamerWrapperCLI {
                 g_printerr("SSP pipeline is null for URL: %s\n", url.c_str());
                 return ;
             }
+
             
-            gst_element_set_state(sspPipeline, GST_STATE_PLAYING);
             
-                //pipeline->SetPlay();
+                pipeline->SetPlay();
+        }
+        static void SetNull(String^ rtspUrl) {
+            msclr::interop::marshal_context context;
+            std::string url = context.marshal_as<std::string>(rtspUrl);
+            SharedSourcePipeline* pipeline = SourceManager::Instance().GetOrCreateSource(url);
+            gst_debug_set_default_threshold(GST_LEVEL_INFO);
+            if (!pipeline) {
+                g_printerr("Failed to get SSP for URL: %s\n", url.c_str());
+                return;
+            }
+            GstElement* sspPipeline = pipeline->GetPipeline();
+            if (!sspPipeline) {
+                g_printerr("SSP pipeline is null for URL: %s\n", url.c_str());
+                return;
+            }
+   
+            pipeline->Shutdown();
+
+
+            //pipeline->SetPlay();
         }
         static void setInfo() {
-            gst_debug_set_default_threshold(GST_LEVEL_DEBUG);
+            gst_debug_set_default_threshold(GST_LEVEL_INFO);
         } 
         static void setWarning() {
             gst_debug_set_default_threshold(GST_LEVEL_WARNING);
@@ -387,7 +407,7 @@ namespace GStreamerWrapperCLI {
                 return false;
             }
 
-
+           
 
             //gst_object_unref(parentObj);
             //gst_object_unref(sinkBin);

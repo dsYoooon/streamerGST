@@ -13,7 +13,7 @@
 
 // 전역 GLib 메인 루프 관련
 static std::thread glibMainLoopThread;
-//static std::atomic<bool> glibMainLoopStarted{ false };
+static std::atomic<bool> glibMainLoopStarted{ false };
 static std::once_flag glibMainLoopFlag;
 
 
@@ -25,10 +25,10 @@ bool Wait_for_state(GstElement* element, GstState desiredState, guint timeout_ms
 }
 static void set_queue_limits(GstElement* q) {
     g_object_set(q,
-        "max-size-buffers", 0,
+        //"max-size-buffers", 10,
         "max-size-bytes", 0,
-        "max-size-time", 500 * GST_MSECOND,
-        "leaky", 1,
+        "max-size-time", 0,
+        //"leaky", 2,
         NULL);
 }
 SharedSourcePipeline::SharedSourcePipeline(const std::string& rtspUrl)
@@ -44,7 +44,7 @@ SharedSourcePipeline::SharedSourcePipeline(const std::string& rtspUrl)
     if (!gstInitialized) {
         //g_slice_set_config(G_SLICE_CONFIG_ALWAYS_MALLOC, TRUE);
         gst_init(nullptr, nullptr);
-        //gst_debug_set_default_threshold(GST_LEVEL_DEBUG);
+        gst_debug_set_default_threshold(GST_LEVEL_INFO);
         GstRegistry* reg = gst_registry_get();
         gst_registry_scan_path(
             reg,
@@ -71,6 +71,7 @@ static void ensure_dynamic_audio_chain(
     const char* id,
     bool use_jitter
 ) {
+    return;
     // 1) 중복 생성 방지
     std::string flagKey = "audio-created-";
     flagKey += id;
@@ -101,7 +102,7 @@ static void ensure_dynamic_audio_chain(
     }
     //g_print("\n%s\n", flagKey.find("file"));
     
-    if (flagKey.find("file") != std::string::npos) {
+    /*if (flagKey.find("file") != std::string::npos) {
         g_object_set(queue,
             "max-size-buffers", 0,
             "max-size-bytes", 0,
@@ -111,8 +112,8 @@ static void ensure_dynamic_audio_chain(
     }
     else {
         set_queue_limits(queue);
-    }
-    //set_queue_limits(queue);
+    }*/
+    set_queue_limits(queue);
   
     //set_queue_limits(queue);
     if (use_jitter) {
@@ -185,32 +186,35 @@ QRETURN WINAPI on_video_preview_callback(
 {
     auto data = static_cast<CaptureData*>(user_data);
     if (!data || !pFrame || len == 0) return QCAP_RT_OK;
-
+    // 인스턴스별 lastSampleTime 사용
+    //double deltaMs = (dSampleTime - data->lastSampleTime) * 1000.0;
+    //data->lastSampleTime = dSampleTime;
+    
     // ① 전체 시작
-    gint64 t0 = g_get_monotonic_time();
+    //gint64 t0 = g_get_monotonic_time();
 
     // ② 버퍼풀에서 버퍼 획득
-    gint64 t1;
+    //gint64 t1;
     GstBuffer* buf = nullptr;
     if (gst_buffer_pool_acquire_buffer(data->videoPool, &buf, NULL) != GST_FLOW_OK)
         return QCAP_RT_FAIL;
-    t1 = g_get_monotonic_time();
+    //t1 = g_get_monotonic_time();
 
     // ③ memcpy
     GstMapInfo info;
     gst_buffer_map(buf, &info, GST_MAP_WRITE);
     memcpy(info.data, pFrame, std::min<ULONG>(len, info.size));
     gst_buffer_unmap(buf, &info);
-    gint64 t2 = g_get_monotonic_time();
+    //gint64 t2 = g_get_monotonic_time();
 
     // ④ push_buffer
     GST_BUFFER_PTS(buf) = gst_util_uint64_scale(dSampleTime * GST_SECOND, 1, 1);
     GST_BUFFER_DURATION(buf) = gst_util_uint64_scale(1, GST_SECOND, 30);
     GstFlowReturn ret = gst_app_src_push_buffer(data->videoSrc, buf);
-    gint64 t3 = g_get_monotonic_time();
+    //gint64 t3 = g_get_monotonic_time();
 
-    g_print("[Timing] pool_acquire=%lldµs, memcpy=%lldµs, push=%lldµs, total=%lldµs\n",
-        t1 - t0, t2 - t1, t3 - t2, t3 - t0);
+    //g_print("[Timing] pool_acquire=%lldµs, memcpy=%lldµs, push=%lldµs, total=%lldµs, interval: %.2f ms\n",    t1 - t0, t2 - t1, t3 - t2, t3 - t0, deltaMs);
+    
 
     if (ret != GST_FLOW_OK)
         g_printerr("[AppSrc] push failed: %s\n", gst_flow_get_name(ret));
@@ -340,19 +344,19 @@ static gboolean bus_callback(GstBus* bus, GstMessage* msg, gpointer data) {
     }
     return TRUE;
 }
-// GLib 메인 루프를 별도 스레드에서 실행 (RTSP 파이프라인 전용)
-//void StartGLibMainLoop() {
-//    std::call_once(glibMainLoopFlag, []() {
-//    /*if (!glibMainLoopStarted.load()) {
-//        glibMainLoopStarted = true;*/
-//        glibMainLoopThread = std::thread([]() {
-//            GMainLoop* mainLoop = g_main_loop_new(nullptr, FALSE);
-//            g_print("GLib Main Loop started.\n");
-//            g_main_loop_run(mainLoop);
-//            g_main_loop_unref(mainLoop);
-//            });
-//        });
-//}
+ //GLib 메인 루프를 별도 스레드에서 실행 (RTSP 파이프라인 전용)
+void StartGLibMainLoop() {
+    std::call_once(glibMainLoopFlag, []() {
+    /*if (!glibMainLoopStarted.load()) {
+        glibMainLoopStarted = true;*/
+        glibMainLoopThread = std::thread([]() {
+            GMainLoop* mainLoop = g_main_loop_new(nullptr, FALSE);
+            g_print("GLib Main Loop started.\n");
+            g_main_loop_run(mainLoop);
+            g_main_loop_unref(mainLoop);
+            });
+        });
+}
 
 // rtspsrc의 동적 pad가 생성되면 depay의 sink pad에 연결하는 콜백 (RTSP branch 전용)
 void SharedSourcePipeline::on_pad_added(GstElement* src, GstPad* new_pad, gpointer user_data) {
@@ -460,10 +464,7 @@ bool SharedSourcePipeline::Init() {
             g_printerr("Failed to link branch output to tee.\n");
             return false;
         }
-        GstBus* bus = gst_element_get_bus(pipeline_);
-        gst_bus_add_watch(bus, bus_callback, pipeline_);
-        gst_object_unref(bus);
-        //StartGLibMainLoop();
+ 
     }
     else if (isFake) {
         gst_bin_add_many(GST_BIN(pipeline_), tee_, fakesink, NULL);
@@ -483,26 +484,29 @@ bool SharedSourcePipeline::Init() {
             g_printerr("Failed to link branch output to tee.\n");
             return false;
         }
-        GstBus* bus = gst_element_get_bus(pipeline_);
-        gst_bus_add_watch(bus, bus_callback, pipeline_);
-        gst_object_unref(bus);
-        mainCont = g_main_context_new();
-        mainLoop_ = g_main_loop_new(mainCont,FALSE);
-        mainLoopThread = std::thread([this]() {
-                    // 이 스레드에서만 유효하도록 컨텍스트 바인딩
-                g_main_context_push_thread_default(mainCont);
-            g_print("Pipeline %s main loop start\n", rtspUrl_.c_str());
-            g_main_loop_run(mainLoop_);
-            g_print("Pipeline %s main loop exit\n", rtspUrl_.c_str());
-            g_main_context_pop_thread_default(mainCont);
-                    // 리소스 정리
-                g_main_loop_unref(mainLoop_);
-            g_main_context_unref(mainCont);
-            });
+        //GstBus* bus = gst_element_get_bus(pipeline_);
+        //gst_bus_add_watch(bus, bus_callback, pipeline_);
+        //gst_object_unref(bus);
+        //mainCont = g_main_context_new();
+        //mainLoop_ = g_main_loop_new(mainCont,FALSE);
+        //mainLoopThread = std::thread([this]() {
+        //            // 이 스레드에서만 유효하도록 컨텍스트 바인딩
+        //        g_main_context_push_thread_default(mainCont);
+        //    g_print("Pipeline %s main loop start\n", rtspUrl_.c_str());
+        //    g_main_loop_run(mainLoop_);
+        //    g_print("Pipeline %s main loop exit\n", rtspUrl_.c_str());
+        //    g_main_context_pop_thread_default(mainCont);
+        //            // 리소스 정리
+        //        g_main_loop_unref(mainLoop_);
+        //    g_main_context_unref(mainCont);
+        //    });
 
         
     }
-
+    //GstBus* bus = gst_element_get_bus(pipeline_);
+    //gst_bus_add_watch(bus, bus_callback, pipeline_);
+    //gst_object_unref(bus);
+    //StartGLibMainLoop();
     /*  SetPlay();
       if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
           g_printerr("Failed to set pipeline to PLAYING state.\n");
@@ -592,7 +596,7 @@ bool SharedSourcePipeline::CreateCaptureBranch(GstElement** branchOut) {
         g_printerr("Capture branch: Failed to create appsrc.\n");
         return false;
     }
-    const int VW = 1920, VH = 1080, VFPS = 60;
+    const int VW = 1920, VH = 1080, VFPS = 30;
     GstCaps* vcaps = gst_caps_new_simple(
         "video/x-raw", "format", G_TYPE_STRING, "YUY2",
         "width", G_TYPE_INT, VW, "height", G_TYPE_INT, VH,
@@ -748,21 +752,17 @@ bool SharedSourcePipeline::CreateCaptureBranch(GstElement** branchOut, bool useA
         "stream-type", GST_APP_STREAM_TYPE_STREAM,
         "format", GST_FORMAT_TIME,
         "do-timestamp", TRUE,
+        //"is-live" , TRUE,
         NULL);
 
     // 2) 비디오 downstream: queue → videoconvert
     GstElement* vqueue = gst_element_factory_make("queue", "capture_vqueue");
-    GstElement* vconvert = gst_element_factory_make("videoconvert", "capture_vconvert");
+    GstElement* vconvert = gst_element_factory_make("d3d11convert", "capture_vconvert");
     if (!vqueue || !vconvert) {
         g_printerr("Capture branch: Failed to create video downstream elements.\n");
         return false;
     }
-    g_object_set(vqueue,
-        "max-size-buffers", 30,
-        //"max-size-bytes", 0,
-        "max-size-time", 200 * GST_MSECOND,
-        "leaky", 2,
-        NULL);
+    set_queue_limits(vqueue);
     
 
     gst_bin_add_many(GST_BIN(pipeline_), vsrc, 
