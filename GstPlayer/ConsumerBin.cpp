@@ -9,9 +9,9 @@
 #include <Windows.h>
 #include <atomic>
 #include <cstdio>
-#include "d3dManager.h"
+
 // 전역적으로 FPS 표시 on/off 여부 (true: 표시, false: 미표시)
-static std::atomic_bool g_showFps(false);
+static std::atomic_bool g_showFps(true);
 static bool qcapOk = false;
 // FPS 측정을 위한 데이터 구조체 (pad probe callback에서 사용)
 struct FpsData {
@@ -48,13 +48,12 @@ static GstPadProbeReturn fps_probe_callback(GstPad* pad, GstPadProbeInfo* info, 
 // 기존 ConsumerBin 생성에 사용하던 카운터 (ghost pad 생성 및 bin 이름용)
 static std::atomic<int> consumerCounter{ 0 };
 // 전역 디코더 선택을 위한 index 변수 (전역 index 증가)
-static std::atomic<int> globalConsumerDecoderIndex{ 0 };
 static void set_queue_limits(GstElement* q) {
     g_object_set(q,
-        //"max-size-buffers", 10,
+        "max-size-buffers", 10,
         "max-size-bytes", 0,
         "max-size-time", 0,
-        //"leaky", 2, 
+        "leaky", 2, 
         NULL);
 }
 ConsumerBin::ConsumerBin(int left, int top, int width, int height, int zorder)
@@ -115,28 +114,7 @@ HWND ConsumerBin::CreatePlaybackWindow(int left, int top, int width, int height)
         NULL, NULL, GetModuleHandle(NULL), NULL);
     return hwnd;
 }
-GstElement* SetDec(int localIndex,const char* name) {
-    GstElement* dec = nullptr;
-    switch (localIndex % 3) {
-    case 0: dec = gst_element_factory_make("nvh264device1dec", name); 
-        break;
-    case 1: dec = gst_element_factory_make("nvh264device2dec", name); 
-        break;
-    case 2: dec = gst_element_factory_make("nvh264device3dec", name); 
-        break;
-    case 3: dec = gst_element_factory_make("nvh264dec", name); 
-        break;
-    default: dec = gst_element_factory_make("nvh264dec", name); 
-        break;
-    }
-    if (!dec) {
-        dec = gst_element_factory_make("d3d11h264dec", name);
-    }
-    //dec = gst_element_factory_make("d3d11h264dec", name);
-    return dec;
-}
 bool ConsumerBin::Init() {
-    int localIndex = globalConsumerDecoderIndex.fetch_add(1);
     std::string binName = "consumer-bin-" + std::to_string(consumerCounter.fetch_add(1));
     //gst_debug_set_default_threshold(GST_LEVEL_INFO);
     consumerBin_ = gst_bin_new(binName.c_str());
@@ -146,209 +124,32 @@ bool ConsumerBin::Init() {
     }
     // … 어딘가 Init 직후
    
-
-    //gst_debug_set_threshold_for_name("basesink", GST_LEVEL_DEBUG);
-    //videotestsrc branch
-    //GstElement* vt_src = gst_element_factory_make("videotestsrc", "vt_src");
-    GstElement* vt_queue = gst_element_factory_make("queue", "vt_que");
-
-    // ■ RTSP video branch
-    GstElement* q_rtsp = gst_element_factory_make("queue", "video_q_rtsp");
-    GstElement* parser = gst_element_factory_make("h264parse", "h264_parse");
-    GstElement* dec = SetDec(localIndex, "rtsp_h264_dec");
-    //GstElement* dec = gst_element_factory_make("d3d11h264dec", "rtsp_h264_dec");
-    GstElement* conv = gst_element_factory_make("videoconvert", "vconv");
-    GstElement* rtspCapsFilter = gst_element_factory_make("capsfilter", "capsfilter_rtsp");
-
-    GstCaps* rtspcaps = gst_caps_from_string("video/x-raw, format=NV12");
-    g_object_set(rtspCapsFilter, "caps", rtspcaps, NULL);
-    gst_caps_unref(rtspcaps);
-    // ■ FILE video branch
-    GstElement* q_file = gst_element_factory_make("queue", "video_q_file");
-    GstElement* parsef = gst_element_factory_make("h264parse", "h264_parse_file");
-    GstElement* decf = SetDec(localIndex, "file_h264_dec");
-    GstElement* convf = gst_element_factory_make("videoconvert", "vconvf");
-    // image file branch
-    GstElement* image_queue = gst_element_factory_make("queue", "image_queue");
-
-    // capture branch
-    GstElement* qc = gst_element_factory_make("queue", "vq_cap");
-    GstElement* vc = gst_element_factory_make("videoconvert", "cap_conv");
-    GstElement* CaptureCapsFilter = gst_element_factory_make("capsfilter", "capsfilter_rtsp");
-
-    GstCaps* CaptureCapsFiltercaps = gst_caps_from_string("video/x-raw, format=NV12");
-    g_object_set(CaptureCapsFilter, "caps", CaptureCapsFiltercaps, NULL);
-    gst_caps_unref(CaptureCapsFiltercaps);
-    GstElement* input_selector = gst_element_factory_make("input-selector", "input_selector");
-
-    //downstream
-    GstElement* vq_out = gst_element_factory_make("queue", "vq_out");
-    GstElement* identity = gst_element_factory_make("identity", "identity");
+    GstElement* que = gst_element_factory_make("queue", "video_q_rtsp");
     GstElement* overlay = gst_element_factory_make("textoverlay", "overlay");
     GstElement* sink = gst_element_factory_make("d3d11videosink", "d3d11videosink");
-    //if (sink) {
-    //    GstD3D11Device* dev = D3D11Manager::Instance().GetDevice();
-    //    if (dev) {
-    //        GstContext* ctx = gst_d3d11_context_new(dev);
-    //        if (!gst_d3d11_handle_set_context(sink, ctx, -1, NULL)) {
-    //            g_printerr("Failed to set D3D11 context on sink\n");
-    //        }
-    //        gst_context_unref(ctx);
-    //    }
-    //    else {
-    //        g_printerr("D3D11 device is null\n");
-    //    }
-    //}
-    //D3DManager::Instance().InjectContext(sink);
-
-    //GstElement* sink = gst_element_factory_make("d3d11videosink", "d3d11videosink");
-    GstElement* fsink = gst_element_factory_make("fpsdisplaysink", "fps");
-    if (
-        //!vt_src ||
-        !vt_queue 
-        ||!q_rtsp || !parser || !dec || !conv || !rtspCapsFilter
-        || !q_file || !parsef || !decf || !convf
-        || !qc || !vc || !CaptureCapsFilter
-        || !image_queue
-        || !input_selector || !vq_out || !identity || !overlay || !sink || !fsink
-        )
-    {
+    //GstElement* fsink = gst_element_factory_make("fpsdisplaysink", "fps");
+    if (!que || !sink 
+        //|| !fsink
+        ) {
         g_printerr("consumer_bin 요소 생성 실패\n");
         return false;
     }
- 
-    set_queue_limits(qc);
-    set_queue_limits(vt_queue);
-    set_queue_limits(q_rtsp);
-    //set_queue_limits(q_file);
-    g_object_set(q_file,
-        "max-size-buffers", 0,
-        "max-size-bytes", 0,
-        "max-size-time", 2000 * GST_MSECOND,
-        "leaky", 2, 
-        NULL);
-    set_queue_limits(vq_out);
-    set_queue_limits(image_queue);
-    g_object_set(identity, "sync", false, NULL);
-    g_object_set(G_OBJECT(overlay),
-        "text", "",    // 초기 텍스트는 빈 문자열
-        "color", 0xFFFFFFFF,
-        "halignment", 2,
-        "valignment", 3,
-        NULL);
-    g_object_set(fsink, "video-sink", sink, "sync", FALSE, "fps-update-interval", 1000, NULL);
+    //g_object_set(fsink, "video-sink", sink, "sync", FALSE, "fps-update-interval", 1000, NULL);
     g_object_set(G_OBJECT(sink),
         "enable-last-sample", false,
         //"force-aspect-ratio", false,
-        "sync", false,
+        "sync", TRUE,
         "render-delay", 0,
         "max-lateness", 0,
         NULL);
-    
-    gst_bin_add_many(GST_BIN(consumerBin_), input_selector, vq_out, identity, overlay, fsink, sink, NULL);
-    gst_bin_add_many(GST_BIN(consumerBin_), image_queue
-        , q_file, parsef, decf, convf
-        , q_rtsp, parser, dec, conv
-        //, rtspCapsFilter
-        //비디오테스트소스 추후
-        //, vt_src
-        , vt_queue
-        , NULL);
-    if (qcapOk) {
-        gst_bin_add_many(GST_BIN(consumerBin_), qc, vc, 
-            //CaptureCapsFilter,
-            NULL);
-    }
-    //videotest 추후
-    //gst_element_link_many(vt_src, vt_queue, nullptr);
 
+    gst_bin_add_many(GST_BIN(consumerBin_), que, overlay, sink, NULL);
+    if (gst_element_link_many(que, overlay,sink,NULL)) {
 
-    //gst_element_link_pads(vt_queue, "src", input_selector, "sink_0");
-    gst_element_link_many(input_selector, vq_out,
-        //identity, 
-        //overlay, 
-        fsink, NULL);
-
-
-    // RTSP video → selector
-    gst_element_link_many(q_rtsp,
-        //parser,
-        dec, 
-        conv, 
-        NULL);
-    GstPad* video_rtsp_sel_pad = gst_element_request_pad_simple(input_selector, "sink_%u");
-    {
-        GstPad* s = gst_element_get_static_pad(conv, "src");
-        gst_pad_link(s, video_rtsp_sel_pad);
-        gst_object_unref(s);
     }
-    {
-        // ghost pad for RTSP
-        GstPad* p = gst_element_get_static_pad(q_rtsp, "sink");
-        gst_element_add_pad(consumerBin_, gst_ghost_pad_new("sink_rtsp_h264", p));
-        gst_object_unref(p);
-    }
-    g_object_set_data(G_OBJECT(consumerBin_), "request_pad_rtsp_h264", video_rtsp_sel_pad);
-    //file video
-    gst_element_link_many(q_file,
-        parsef,
-        decf,
-        convf,
-        NULL);
-    GstPad* video_file_sel_pad = gst_element_request_pad_simple(input_selector, "sink_%u");
-    {
-        GstPad* s = gst_element_get_static_pad(convf, "src");
-        gst_pad_link(s, video_file_sel_pad);
-        gst_object_unref(s);
-    }
-    {
-        GstPad* p = gst_element_get_static_pad(q_file, "sink");
-        gst_element_add_pad(consumerBin_, gst_ghost_pad_new("sink_file_h264", p));
-        gst_object_unref(p);
-    }
-    g_object_set_data(G_OBJECT(consumerBin_), "request_pad_file_h264", video_file_sel_pad);
-    // file image
-    GstPad* video_image_sel_pad = gst_element_request_pad_simple(input_selector, "sink_%u");
-    {
-        GstPad* s = gst_element_get_static_pad(image_queue, "src");
-        gst_pad_link(s, video_image_sel_pad);
-        gst_object_unref(s);
-    }
-    {
-        GstPad* sink = gst_element_get_static_pad(image_queue, "sink");
-        gst_element_add_pad(consumerBin_, gst_ghost_pad_new("sink_file_image", sink));
-        gst_object_unref(sink);
-    }
-    g_object_set_data(G_OBJECT(consumerBin_), "request_pad_file_image", video_image_sel_pad);
-    GstPad* video_vt_sel_pad = gst_element_request_pad_simple(input_selector, "sink_%u");
-    {
-        GstPad* s = gst_element_get_static_pad(vt_queue, "src");
-        gst_pad_link(s, video_vt_sel_pad);
-        gst_object_unref(s);
-    }
-    {
-        GstPad* sink = gst_element_get_static_pad(vt_queue, "sink");
-        gst_element_add_pad(consumerBin_, gst_ghost_pad_new("sink_video_test", sink));
-        gst_object_unref(sink);
-    }
-    g_object_set_data(G_OBJECT(consumerBin_), "request_pad_video_test", video_vt_sel_pad);
-    //gst_element_set_state(consumerBin_, GST_STATE_READY);
-    //capture 
-    /*
-    gst_element_link_many(qc, vc, NULL);
-    GstPad* cap_sel_pad = gst_element_request_pad_simple(input_selector, "sink_%u");
-    {
-        GstPad* s = gst_element_get_static_pad(vc, "src");
-        gst_pad_link(s, cap_sel_pad);
-        gst_object_unref(s);
-    }
-    {
-        GstPad* sink = gst_element_get_static_pad(qc, "sink");
-        gst_element_add_pad(consumerBin_, gst_ghost_pad_new("sink_capture_card", sink));
-        gst_object_unref(sink);
-    }
-    g_object_set_data(G_OBJECT(consumerBin_), "request_pad_capture_card", cap_sel_pad);
-    */
+    GstPad* p = gst_element_get_static_pad(que, "sink");
+    gst_element_add_pad(consumerBin_, gst_ghost_pad_new("sink_consumer", p));
+    gst_object_unref(p);
 
 
     // --- Step L: Video overlay 설정 (sink에 윈도우 핸들 연결) ---
@@ -363,28 +164,28 @@ bool ConsumerBin::Init() {
     
     // --- 새로 추가: pad probe를 통한 FPS 측정 ---
     // overlay의 src pad에 pad probe를 등록합니다.
-    //GstPad* probePad = gst_element_get_static_pad(overlay, "src");
-    //if (probePad) {
-    //    // FpsData 구조체 초기화
-    //    FpsData* fpsData = new FpsData;
-    //    fpsData->overlay = overlay;
-    //    fpsData->lastTime = g_get_monotonic_time();
-    //    fpsData->frameCount = 0;
-    //    guint probe_id = gst_pad_add_probe(probePad, GST_PAD_PROBE_TYPE_BUFFER, fps_probe_callback, fpsData, NULL);
-    //    // probe_id를 나중에 제거할 수 있도록 저장
-    //    g_object_set_data(
-    //        G_OBJECT(consumerBin_),
-    //        "fps_probe_id",
-    //        GUINT_TO_POINTER(probe_id)
-    //    );
-    //    gst_object_unref(probePad);
-    //    // fpsData 해제는 Shutdown()에서 처리
-    //    g_object_set_data(G_OBJECT(consumerBin_), "fps_data", fpsData);
-    //}
-    //else {
-    //    g_printerr("Failed to get overlay src pad for FPS probe.\n");
-    //}
-    //gst_debug_set_default_threshold(GST_LEVEL_ERROR);
+    GstPad* probePad = gst_element_get_static_pad(overlay, "src");
+    if (probePad) {
+        // FpsData 구조체 초기화
+        FpsData* fpsData = new FpsData;
+        fpsData->overlay = overlay;
+        fpsData->lastTime = g_get_monotonic_time();
+        fpsData->frameCount = 0;
+        guint probe_id = gst_pad_add_probe(probePad, GST_PAD_PROBE_TYPE_BUFFER, fps_probe_callback, fpsData, NULL);
+        // probe_id를 나중에 제거할 수 있도록 저장
+        g_object_set_data(
+            G_OBJECT(consumerBin_),
+            "fps_probe_id",
+            GUINT_TO_POINTER(probe_id)
+        );
+        gst_object_unref(probePad);
+        // fpsData 해제는 Shutdown()에서 처리
+        g_object_set_data(G_OBJECT(consumerBin_), "fps_data", fpsData);
+    }
+    else {
+        g_printerr("Failed to get overlay src pad for FPS probe.\n");
+    }
+    gst_debug_set_default_threshold(GST_LEVEL_ERROR);
     return true;
 }
 
@@ -394,25 +195,6 @@ void ConsumerBin::ReconfigureSink() {
     if (!sink) return;
 
     gst_element_set_state(consumerBin_, GST_STATE_NULL);
-
-    //gst_video_overlay_set_window_handle(
-    //    GST_VIDEO_OVERLAY(sink),
-    //    reinterpret_cast<guintptr>(windowHandle)
-    //);
-    //RECT rc;
-    //GetClientRect((HWND)windowHandle, &rc);
-    //int w = rc.right - rc.left;
-    //int h = rc.bottom - rc.top;
-
-    //// 5) 렌더 사각형 명시적 설정 (0,0부터 w×h 영역)
-    //gst_video_overlay_set_render_rectangle(
-    //    GST_VIDEO_OVERLAY(sink),
-    //    /*x=*/0, /*y=*/0,
-    //    /*w=*/w, /*h=*/h
-    //);
-    //gst_element_send_event(sink, gst_event_new_reconfigure());
-    //
-    //gst_video_overlay_expose(GST_VIDEO_OVERLAY(sink));
 
     gst_element_set_state(consumerBin_, GST_STATE_PLAYING);
 
@@ -446,93 +228,7 @@ void ConsumerBin::SyncParent() {
     }
 }
 
-// ■ ■ ■ ConsumerBin::Shutdown() (전체 재작성) ■ ■ ■
-//void ConsumerBin::Shutdown() {
-//    gst_debug_set_threshold_for_name("GST_REFCOUNTING", GST_LEVEL_MEMDUMP);
-//
-//    if (!consumerBin_)
-//        return;
-//
-//    // 1) FPS pad-probe 제거
-//    gpointer probePtr = g_object_get_data(G_OBJECT(consumerBin_), "fps_probe_id");
-//    if (probePtr) {
-//        guint probe_id = GPOINTER_TO_UINT(probePtr);
-//        // overlay src pad 가져와서 probe 제거
-//        GstElement* overlayElem = gst_bin_get_by_name(GST_BIN(consumerBin_), "overlay");
-//        if (overlayElem) {
-//            GstPad* pad = gst_element_get_static_pad(overlayElem, "src");
-//            if (pad) {
-//                gst_pad_remove_probe(pad, probe_id);
-//                gst_object_unref(pad);
-//            }
-//            gst_object_unref(overlayElem);
-//        }
-//        g_object_set_data(G_OBJECT(consumerBin_), "fps_probe_id", NULL);
-//    }
-//
-//    // 2) fps_data 메모리 해제
-//    gpointer fpsDataPtr = g_object_get_data(G_OBJECT(consumerBin_), "fps_data");
-//    if (fpsDataPtr) {
-//        delete static_cast<FpsData*>(fpsDataPtr);
-//        g_object_set_data(G_OBJECT(consumerBin_), "fps_data", NULL);
-//    }
-//
-//    // 3) Input-selector에 요청한 request-pad 반납
-//    GstElement* selector = gst_bin_get_by_name(GST_BIN(consumerBin_), "input_selector");
-//    if (selector) {
-//        const char* keys[] = {
-//            "request_pad_rtsp_h264",
-//            "request_pad_file_h264",
-//            "request_pad_file_image",
-//            "request_pad_video_test",
-//            // "request_pad_capture_card" // 필요 시 추가
-//        };
-//        for (auto key : keys) {
-//            GstPad* pad = static_cast<GstPad*>(
-//                g_object_get_data(G_OBJECT(consumerBin_), key)
-//                );
-//            if (pad) {
-//                gst_element_release_request_pad(selector, pad);
-//                gst_object_unref(pad);
-//                g_object_set_data(G_OBJECT(consumerBin_), key, NULL);
-//            }
-//        }
-//        gst_object_unref(selector);
-//    }
-//
-//    // 4) ghost pad 제거
-//    const char* ghosts[] = {
-//        "sink_rtsp_h264",
-//        "sink_file_h264",
-//        "sink_file_image",
-//        "sink_video_test",
-//       /// "sink_capture_card"
-//    };
-//    for (auto name : ghosts) {
-//        // 1) 이름으로 pad 객체를 얻어온다
-//        GstPad* ghost_pad = gst_element_get_static_pad(consumerBin_, name);
-//        if (ghost_pad) {
-//            // 2) pad 제거
-//            if (!gst_element_remove_pad(consumerBin_, ghost_pad)) {
-//                g_printerr("Shutdown: failed to remove ghost pad %s\n", name);
-//            }
-//            // 3) unref
-//            gst_object_unref(ghost_pad);
-//        }
-//        else {
-//            g_printerr("Shutdown: ghost pad '%s' not found\n", name);
-//        }
-//    }
-//
-//    // 5) Bin 상태 정리 및 unref
-//    gst_element_set_state(consumerBin_, GST_STATE_NULL);
-//    gst_object_unref(consumerBin_);
-//    consumerBin_ = nullptr;
-//
-//    // (선택) 디버그 설정 원상복귀
-//    // gst_debug_set_default_threshold(GST_LEVEL_DEBUG);
-//    gst_debug_set_active(FALSE);
-//}
+
 void ConsumerBin::Shutdown() {
     if (!consumerBin_)
         return;
@@ -756,25 +452,7 @@ void ConsumerBin::SetWindow(int left, int top, int width, int height) {
         HWND_TOP,
         left, top, width, height,
         SWP_NOZORDER);
-    // 2) d3d11videosink 요소 가져오기
-    //GstElement* sink = gst_bin_get_by_name(GST_BIN(consumerBin_), "d3d11videosink");
-    //if (!sink) return;
-    //if (width <= 1 || height <= 1) {
-    //    gst_object_unref(sink);
-    //    return;
-    //}
-
-    //// 3) 윈도우 핸들 다시 설정 → 내부 스왑체인 타겟 재바인딩
-    //gst_video_overlay_set_window_handle(
-    //    GST_VIDEO_OVERLAY(sink),
-    //    reinterpret_cast<guintptr>(windowHandle)
-    //);
-
-    //// 4) 재설정 이벤트 전송 → 싱크가 새 창 크기에 맞춰 스왑체인 재생성
-    //GstEvent* ev = gst_event_new_reconfigure();
-    //gst_element_send_event(sink, ev);
-
-    //gst_object_unref(sink);
+    
 }
 
 void ConsumerBin::ShowWin(bool isShowing) {
@@ -783,17 +461,6 @@ void ConsumerBin::ShowWin(bool isShowing) {
         if (!sink) return;
 
 
-        //// 3) 윈도우 핸들 다시 설정 → 내부 스왑체인 타겟 재바인딩
-        //gst_video_overlay_set_window_handle(
-        //    GST_VIDEO_OVERLAY(sink),
-        //    reinterpret_cast<guintptr>(windowHandle)
-        //);
-
-        //// 4) 재설정 이벤트 전송 → 싱크가 새 창 크기에 맞춰 스왑체인 재생성
-        //GstEvent* ev = gst_event_new_reconfigure();
-        //gst_element_send_event(sink, ev);
-        //
-        
         gst_object_unref(sink);
         ShowWindow(windowHandle, SW_SHOW);
         // 2) d3d11videosink 요소 가져오기

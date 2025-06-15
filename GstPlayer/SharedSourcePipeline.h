@@ -55,10 +55,11 @@ public:
     void ToggleMute();
     //captur변수
     void SetVolume(double vol);
+    //HWND CreatePlaybackWindow(int left, int top, int width, int height);
 private:
     bool isMute = true;
     double CaptureFPS;
-
+    HWND  windowHandle;
     static void on_pad_added(GstElement* src, GstPad* new_pad, gpointer user_data);
     bool CreateFakesrcBranch(GstElement** branchOut);   // 테스트용: videotestsrc 분기
     bool CreateImageBranch(GstElement** branchOut);     // 이미지 파일 소스 분기 (filesrc → decodebin → imagefreeze)
@@ -66,7 +67,6 @@ private:
     bool CreateRTSPBranch(GstElement** branchOut);      // RTSP 분기
     bool CreateCaptureBranch(GstElement** branchOut, bool useAudio);
     // --- 캡쳐 소스용 분기 추가 ---
-    bool CreateCaptureBranch(GstElement** branchOut);
 
     std::string rtspUrl_;
     GstElement* pipeline_; // 최상위 파이프라인

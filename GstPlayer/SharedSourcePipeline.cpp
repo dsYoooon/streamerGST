@@ -9,13 +9,37 @@
 #include <sstream>
 #include <cstring>
 #include <gst/app/gstappsrc.h>
+#include <gst/video/videooverlay.h>
+#include <Windows.h>
 
 
 // 전역 GLib 메인 루프 관련
 static std::thread glibMainLoopThread;
 static std::atomic<bool> glibMainLoopStarted{ false };
 static std::once_flag glibMainLoopFlag;
-
+static std::atomic<int> idxCounter{ 0 };
+static HWND CreatePlaybackWindow(int left, int top, int width, int height) {
+    const wchar_t CLASS_NAME[] = L"GStreamer Playback Window";
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASS wc = {};
+        wc.lpfnWndProc = DefWindowProc;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = CLASS_NAME;
+        RegisterClass(&wc);
+        registered = true;
+    }
+    return CreateWindowEx(
+        WS_EX_TOOLWINDOW,
+        CLASS_NAME,
+        L"",
+        WS_POPUP | WS_VISIBLE,
+        left, top, width, height,
+        NULL, NULL,
+        GetModuleHandle(NULL),
+        NULL
+    );
+}
 
 bool Wait_for_state(GstElement* element, GstState desiredState, guint timeout_ms) {
     GstState current, pending;
@@ -23,12 +47,32 @@ bool Wait_for_state(GstElement* element, GstState desiredState, guint timeout_ms
     GstStateChangeReturn ret = gst_element_get_state(element, &current, &pending, timeout);
     return (current == desiredState);
 }
+GstElement* SetDeco(int localIndex, const char* name) {
+    GstElement* dec = nullptr;
+    switch (localIndex % 4) {
+    case 0: dec = gst_element_factory_make("nvh264device1dec", name);
+        break;
+    case 1: dec = gst_element_factory_make("nvh264device2dec", name);
+        break;
+    case 2: dec = gst_element_factory_make("nvh264device3dec", name);
+        break;
+    case 3: dec = gst_element_factory_make("nvh264dec", name);
+        break;
+    default: dec = gst_element_factory_make("nvh264dec", name);
+        break;
+    }
+    if (!dec) {
+        dec = gst_element_factory_make("d3d11h264dec", name);
+    }
+    //dec = gst_element_factory_make("d3d11h264dec", name);
+    return dec;
+}
 static void set_queue_limits(GstElement* q) {
     g_object_set(q,
-        //"max-size-buffers", 10,
+        "max-size-buffers", 10,
         "max-size-bytes", 0,
         "max-size-time", 0,
-        //"leaky", 2,
+        "leaky", 2,
         NULL);
 }
 SharedSourcePipeline::SharedSourcePipeline(const std::string& rtspUrl)
@@ -71,7 +115,7 @@ static void ensure_dynamic_audio_chain(
     const char* id,
     bool use_jitter
 ) {
-    return;
+    //return;
     // 1) 중복 생성 방지
     std::string flagKey = "audio-created-";
     flagKey += id;
@@ -284,22 +328,57 @@ static void on_pad_added_rtsp(GstElement* src, GstPad* new_pad, gpointer data) {
     }
     gst_caps_unref(caps);
 }
-static void on_pad_added_video_file(GstElement* src, GstPad* new_pad, gpointer data) {
-    GstPipeline* pipe = GST_PIPELINE(data);
-    GstCaps* caps = gst_pad_query_caps(new_pad, nullptr);
-    const gchar* name = gst_structure_get_name(gst_caps_get_structure(caps, 0));
-    gst_caps_unref(caps);
-    if (g_str_has_prefix(name, "video/")) {
-        GstPad* sink = gst_element_get_static_pad(
-            gst_bin_get_by_name(GST_BIN(pipe), "video_queue_file"), "sink");
-        gst_pad_link(new_pad, sink);
-        gst_object_unref(sink);
-    }
-    else if (g_str_has_prefix(name, "audio/")) {
-        ensure_dynamic_audio_chain(pipe, new_pad, "file", false);
+static void on_pad_added_video_file(GstElement* src, GstPad* pad, gpointer user_data) {
+    GstElement* pipeline = static_cast<GstElement*>(user_data);
 
+    GstElement* qv = gst_bin_get_by_name(GST_BIN(pipeline), "video_queue_file");
+    GstElement* parse = gst_bin_get_by_name(GST_BIN(pipeline), "h264_parse");
+
+    if (!qv || !parse) {
+        g_printerr("Failed to find elements for pad linking.\n");
+        return;
     }
+
+    GstPad* sinkpad = gst_element_get_static_pad(qv, "sink");
+    if (gst_pad_is_linked(sinkpad)) {
+        g_print("Pad already linked, skipping.\n");
+        gst_object_unref(sinkpad);
+        gst_object_unref(qv);
+        gst_object_unref(parse);
+        return;
+    }
+
+    if (gst_pad_link(pad, sinkpad) != GST_PAD_LINK_OK) {
+        g_printerr("Failed to link qtdemux pad to queue.\n");
+    }
+    else {
+        g_print("Linked qtdemux pad to video queue.\n");
+
+        // queue → parse → dec → conv
+        if (!gst_element_link_many(qv, parse, NULL)) {
+            g_printerr("Failed to link queue → parse.\n");
+        }
+        else {
+            GstElement* dec = gst_bin_get_by_name(GST_BIN(pipeline), "h264_decode");
+            GstElement* conv = gst_bin_get_by_name(GST_BIN(pipeline), "convert");
+
+            if (!gst_element_link_many(parse, dec, conv, NULL)) {
+                g_printerr("Failed to link parse → dec → convert.\n");
+            }
+            else {
+                g_print("Linked video decode branch successfully.\n");
+            }
+
+            gst_object_unref(dec);
+            gst_object_unref(conv);
+        }
+    }
+
+    gst_object_unref(sinkpad);
+    gst_object_unref(qv);
+    gst_object_unref(parse);
 }
+
 SharedSourcePipeline::~SharedSourcePipeline() {
 
     Shutdown();
@@ -327,16 +406,7 @@ static gboolean bus_callback(GstBus* bus, GstMessage* msg, gpointer data) {
         gst_element_seek_simple(pipeline, GST_FORMAT_TIME,
             (GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT), 0);
         gst_debug_set_default_threshold(GST_LEVEL_ERROR);
-        //
-        //if (!gst_element_seek(pipeline, 1.0,                    // 배속 1.0배
-        //    GST_FORMAT_TIME,
-        //    static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT),
-        //    GST_SEEK_TYPE_SET, 0,           // 시작 위치로 seek
-        //    GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE)) {
-        //    g_printerr("Seek failed!\n");
-
-
-        //}
+     
         break;
     }
     default:
@@ -370,6 +440,7 @@ void SharedSourcePipeline::on_pad_added(GstElement* src, GstPad* new_pad, gpoint
         gst_object_unref(sink_pad);
     }
 }
+
 bool SharedSourcePipeline::Init() {
     g_printerr("%s\n", rtspUrl_.c_str());
     pipeline_ = gst_pipeline_new(("pipeline-" + rtspUrl_).c_str());
@@ -484,9 +555,9 @@ bool SharedSourcePipeline::Init() {
             g_printerr("Failed to link branch output to tee.\n");
             return false;
         }
-        //GstBus* bus = gst_element_get_bus(pipeline_);
-        //gst_bus_add_watch(bus, bus_callback, pipeline_);
-        //gst_object_unref(bus);
+        GstBus* bus = gst_element_get_bus(pipeline_);
+        gst_bus_add_watch(bus, bus_callback, pipeline_);
+        gst_object_unref(bus);
         //mainCont = g_main_context_new();
         //mainLoop_ = g_main_loop_new(mainCont,FALSE);
         //mainLoopThread = std::thread([this]() {
@@ -506,7 +577,7 @@ bool SharedSourcePipeline::Init() {
     //GstBus* bus = gst_element_get_bus(pipeline_);
     //gst_bus_add_watch(bus, bus_callback, pipeline_);
     //gst_object_unref(bus);
-    //StartGLibMainLoop();
+    StartGLibMainLoop();
     /*  SetPlay();
       if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
           g_printerr("Failed to set pipeline to PLAYING state.\n");
@@ -515,10 +586,11 @@ bool SharedSourcePipeline::Init() {
     gst_element_set_state(pipeline_, GST_STATE_PLAYING);
     const guint pollInterval = 67;
     guint elapsed = 0;
-    while (!Wait_for_state(pipeline_, GST_STATE_PLAYING, pollInterval) && elapsed < 3000) {
+    while (!Wait_for_state(pipeline_, GST_STATE_PLAYING, pollInterval) && elapsed < 10000) {
         elapsed += pollInterval;
     }
     g_printerr("wait during : %d\n", elapsed);
+    //gst_element_set_state(pipeline_, GST_STATE_PAUSED);
     return true;
 }
 bool SharedSourcePipeline::CreateFakesrcBranch(GstElement** branchOut) {
@@ -589,132 +661,7 @@ bool SharedSourcePipeline::CreateImageBranch(GstElement** branchOut) {
     *branchOut = imagefreeze;
     return true;
 }
-bool SharedSourcePipeline::CreateCaptureBranch(GstElement** branchOut) {
-    // appsrc 생성: 캡쳐 카드 데이터를 받아 처리할 요소
-    GstElement* source = gst_element_factory_make("appsrc", "capture_src");
-    if (!source) {
-        g_printerr("Capture branch: Failed to create appsrc.\n");
-        return false;
-    }
-    const int VW = 1920, VH = 1080, VFPS = 30;
-    GstCaps* vcaps = gst_caps_new_simple(
-        "video/x-raw", "format", G_TYPE_STRING, "YUY2",
-        "width", G_TYPE_INT, VW, "height", G_TYPE_INT, VH,
-        "framerate", GST_TYPE_FRACTION, VFPS, 1, NULL);
-    if (!captureData_) captureData_ = new CaptureData();
-    captureData_->videoSrc = GST_APP_SRC(source);
-    captureData_->videoPool = gst_buffer_pool_new();
-    {
-        GstCaps* pc = gst_caps_copy(vcaps);
-        GstStructure* cfg = gst_buffer_pool_get_config(captureData_->videoPool);
-        gst_buffer_pool_config_set_params(cfg, pc, VW * VH * 2, 100, 300);
-        gst_buffer_pool_set_config(captureData_->videoPool, cfg);
-        gst_buffer_pool_set_active(captureData_->videoPool, TRUE);
-        gst_caps_unref(pc);
-    }
-    GstCaps* acaps = gst_caps_from_string(
-        "audio/x-raw,format=S16LE,channels=2,rate=48000,layout=interleaved");
 
-
-    captureData_->audioPool = gst_buffer_pool_new();
-
-    {
-        GstCaps* pc = gst_caps_copy(acaps);
-        GstStructure* cfg = gst_buffer_pool_get_config(captureData_->audioPool);
-        gst_buffer_pool_config_set_params(cfg, pc, 48000 * 4 / 2, 100, 400);
-        gst_buffer_pool_set_config(captureData_->audioPool, cfg);
-        gst_buffer_pool_set_active(captureData_->audioPool, TRUE);
-        gst_caps_unref(pc);
-    }
-    // 캡스 설정: video/x-raw, YUY2 포맷, 1920x1080 해상도, 30fps
-
-    gst_app_src_set_caps(GST_APP_SRC(source), vcaps);
-    gst_caps_unref(vcaps);
-    g_object_set(G_OBJECT(source), "stream-type", 0, "format", GST_FORMAT_TIME, NULL);
-
-    // downstream 요소 생성: queue와 videoconvert
-    GstElement* queue = gst_element_factory_make("queue", "capture_queue");
-    set_queue_limits(queue);
-    if (!queue) {
-        g_printerr("Capture branch: Failed to create queue.\n");
-        return false;
-    }
-    GstElement* convert = gst_element_factory_make("videoconvert", "capture_convert");
-    if (!convert) {
-        g_printerr("Capture branch: Failed to create videoconvert.\n");
-        return false;
-    }
-    // 파이프라인에 요소 추가 및 연결
-    gst_bin_add_many(GST_BIN(pipeline_), source, queue, convert, NULL);
-    if (!gst_element_link_many(source, queue, convert, NULL)) {
-        g_printerr("Capture branch: Failed to link appsrc -> queue -> videoconvert.\n");
-        return false;
-    }
-    GstElement* asrc = gst_element_factory_make("appsrc", "audio_src");
-    GstElement* aque = gst_element_factory_make("queue", "audio_queue");
-    GstElement* acon = gst_element_factory_make("audioconvert", "audio_conv");
-    GstElement* aident = gst_element_factory_make("identity", "audio_identity");
-    GstElement* vol = gst_element_factory_make("volume", "volume");
-    GstElement* ares = gst_element_factory_make("audioresample", "audio_res");
-    GstElement* asnk = gst_element_factory_make("autoaudiosink", "audio_sink");
-
-    if (!asrc || !aque || !acon || !aident || !vol || !ares || !asnk) {
-        return false;
-    }
-    captureData_->audioSrc = GST_APP_SRC(asrc);
-    set_queue_limits(aque);
-    set_queue_limits(queue);
-    gst_bin_add_many(GST_BIN(pipeline_), asrc, aque, acon, aident, vol, ares, asnk, NULL);
-    gst_element_link_many(asrc, aque, acon, aident, vol, ares, asnk, NULL);
-    // "capture://" 이후의 문자열을 파싱하여 장치 이름(deviceName)과 채널(channel)를 구함
-    // 예: "capture://SC0710 PCI,5" → deviceName: "SC0710 PCI", channel: 5
-    std::string captureSpec = rtspUrl_.substr(std::string("capture://").length());
-    g_object_set(aident, "signal-handoffs", TRUE, NULL);
-    std::string deviceName;
-    int channel = 0; // 기본 채널 0으로 설정
-    size_t commaPos = captureSpec.find(',');
-    if (commaPos != std::string::npos) {
-        deviceName = captureSpec.substr(0, commaPos);
-        std::string channelStr = captureSpec.substr(commaPos + 1);
-        try {
-            channel = std::stoi(channelStr);
-        }
-        catch (...) {
-            g_printerr("Capture branch: Invalid channel value in URL, defaulting to 0.\n");
-            channel = 0;
-        }
-    }
-    else {
-        deviceName = captureSpec;  // 콤마가 없으면 전체 문자열을 장치 이름으로 사용
-    }
-    g_printerr("Capture branch: Using device '%s' with channel %d.\n", deviceName.c_str(), channel);
-
-    // 캡쳐 카드 소스의 경우, SSP 인스턴스 내에서 QCAP 장치를 생성하고 프레임 콜백을 등록합니다.
-
-    if (fQ_CREATE((CHAR*)deviceName.c_str(), channel, NULL, &qcapDevice_, TRUE, FALSE)) {
-        g_printerr("Capture branch: QCAP_CREATE failed.\n");
-        return false;
-    }
-
-    gst_app_src_set_caps(GST_APP_SRC(asrc), acaps);
-    g_object_set(asrc,
-        "format", GST_FORMAT_TIME,
-        "stream-type", GST_APP_STREAM_TYPE_STREAM,
-        "do-timestamp", TRUE, NULL);
-    // QCAP 콜백 등록: on_video_preview_callback을 등록하여 캡쳐된 프레임을 appsrc로 push하도록 함
-    fQ_VID(qcapDevice_, on_video_preview_callback, captureData_);
-    fQ_AUD(qcapDevice_, on_audio_preview_callback, captureData_);
-    
-    QCAP_SET_VIDEO_DEFAULT_OUTPUT_FORMAT(qcapDevice_, QCAP_COLORSPACE_TYPE_YUY2, VW, VH, FALSE, (double)VFPS);
-    fQ_RUN(qcapDevice_);
-    // 큐캡에서 프레임 레이트를 설정하는 예:
-// (예를 들어, YUY2 포맷, 1920x1080, 30fps, 비인터리브 모드)
-
-
-    // 최종 출력 요소는 videoconvert를 반환하여 consumer bin 등과 연결
-    *branchOut = convert;
-    return true;
-}
 bool SharedSourcePipeline::CreateCaptureBranch(GstElement** branchOut, bool useAudio) {
     // 1) 비디오 appsrc 생성 및 설정
     GstElement* vsrc = gst_element_factory_make("appsrc", "capture_vsrc");
@@ -757,7 +704,8 @@ bool SharedSourcePipeline::CreateCaptureBranch(GstElement** branchOut, bool useA
 
     // 2) 비디오 downstream: queue → videoconvert
     GstElement* vqueue = gst_element_factory_make("queue", "capture_vqueue");
-    GstElement* vconvert = gst_element_factory_make("d3d11convert", "capture_vconvert");
+    GstElement* vconvert = gst_element_factory_make("videoconvert", "capture_vconvert");
+    //GstElement* vconvert = gst_element_factory_make("d3d11convert", "capture_vconvert");
     if (!vqueue || !vconvert) {
         g_printerr("Capture branch: Failed to create video downstream elements.\n");
         return false;
@@ -767,18 +715,18 @@ bool SharedSourcePipeline::CreateCaptureBranch(GstElement** branchOut, bool useA
 
     gst_bin_add_many(GST_BIN(pipeline_), vsrc, 
         vqueue,
-        // vconvert,
+         vconvert,
         NULL);
     if (!gst_element_link_many(vsrc,
          vqueue, 
-// vconvert, 
+ vconvert, 
         NULL)) {
         g_printerr("Capture branch: Failed to link video chain.\n");
         return false;
     }
 
     // 비디오 요소 상태 동기화
-    for (auto e : { vsrc ,vqueue}) {
+    for (auto e : { vsrc ,vqueue,vconvert }) {
         gst_element_sync_state_with_parent(e);
     }
 
@@ -896,7 +844,7 @@ bool SharedSourcePipeline::CreateCaptureBranch(GstElement** branchOut, bool useA
     }
     fQ_RUN(qcapDevice_);
     // 5) 브랜치 아웃풋(비디오 convert) 반환
-    *branchOut = vqueue;
+    *branchOut = vconvert;
     return true;
 }
 
@@ -909,7 +857,7 @@ bool SharedSourcePipeline::CreateVideoBranch(GstElement** branchOut) {
         g_printerr("Failed to create filesrc for video.\n");
         return false;
     }
-    g_object_set(G_OBJECT(source), "location", filePath.c_str(), NULL);
+    g_object_set(G_OBJECT(source), "location", filePath.c_str(), "is-live",true, NULL);
 
     GstElement* demux = gst_element_factory_make("qtdemux", "video_demux");
     if (!demux) {
@@ -918,14 +866,17 @@ bool SharedSourcePipeline::CreateVideoBranch(GstElement** branchOut) {
     }
 
     GstElement* qv_f = gst_element_factory_make("queue", "video_queue_file");
+    GstElement* parse = gst_element_factory_make("h264parse", "h264_parse");
+    GstElement* dec = gst_element_factory_make("nvh264dec", "h264_decode");
+    GstElement* conv = gst_element_factory_make("videoconvert", "convert");
     g_object_set(qv_f,
         "max-size-buffers", 20,
         "max-size-bytes", 0,
-        "max-size-time", 50 * GST_MSECOND,
-        //"leaky", 2, 
+        "max-size-time", 0,
+        "leaky", 2,
         NULL);
 
-    gst_bin_add_many(GST_BIN(pipeline_), source, demux, qv_f, NULL);
+    gst_bin_add_many(GST_BIN(pipeline_), source, demux, qv_f, parse, dec, conv, NULL);
 
     if (!gst_element_link(source, demux)) {
         g_printerr("Failed to link filesrc -> demux for video.\n");
@@ -937,33 +888,46 @@ bool SharedSourcePipeline::CreateVideoBranch(GstElement** branchOut) {
     g_signal_connect(demux, "pad-added", G_CALLBACK(on_pad_added_video_file), pipeline_);
 
     // branch output은 identity (tee 연결은 여기서 나가야 함)
-    *branchOut = qv_f;
+    *branchOut = conv;
     return true;
 }
-
 
 bool SharedSourcePipeline::CreateRTSPBranch(GstElement** branchOut) {
     rtspsrc_ = gst_element_factory_make("rtspsrc", "rtsp_source");
     GstElement* qv = gst_element_factory_make("queue", "video_q_rtsp");
     GstElement* depay = gst_element_factory_make("rtph264depay", "h264_depay");
     GstElement* parse = gst_element_factory_make("h264parse", "h264_parse");
-    if (!rtspsrc_ || !depay || !parse || !qv) {
+    GstElement* qv1 = gst_element_factory_make("queue", "video_q_rtsp1");
+    GstElement* dec = SetDeco(idxCounter.fetch_add(1), "dec");
+        //gst_element_factory_make("nvh264dec", "h264_decode");
+    
+    GstElement* conv = gst_element_factory_make("videoconvert", "convert");
+    GstElement* rate = gst_element_factory_make("videorate", "rate");
+    GstElement* caps = gst_element_factory_make("capsfilter", "caps");
+    if (!rtspsrc_ || !depay || !parse || !qv || !qv1 || !dec || !conv) {
         g_printerr("Failed to create one or more RTSP branch elements.\n");
         return false;
     }
+    GstCaps* fps_caps = gst_caps_from_string("video/x-raw,framerate=60/1");
+    g_object_set(caps, "caps", fps_caps, NULL);
+    gst_caps_unref(fps_caps);
     set_queue_limits(qv);
-    gst_bin_add_many(GST_BIN(pipeline_), rtspsrc_, qv, depay, parse, NULL);
+    set_queue_limits(qv1);
+    gst_bin_add_many(GST_BIN(pipeline_), rtspsrc_, qv, depay, parse, qv1, dec,rate,caps, conv, NULL);
     g_object_set(G_OBJECT(rtspsrc_), "location", rtspUrl_.c_str(), "latency", 0,
         "drop-on-latency", TRUE,
         NULL);
-    if (!gst_element_link_many(qv, depay, parse, NULL)) {
+    if (!gst_element_link_many(qv, depay, parse, qv1, dec,
+        //conv, 
+        rate,caps,
+        NULL)) {
         g_printerr("Failed to link RTSP branch: depay -> parse.\n");
         return false;
     }
     // rtspsrc의 동적 패드를 depay에 연결
     g_signal_connect(rtspsrc_, "pad-added", G_CALLBACK(on_pad_added_rtsp), pipeline_);
     // branch output은 parse
-    *branchOut = parse;
+    *branchOut = caps;
     return true;
 }
 

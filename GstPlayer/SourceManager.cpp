@@ -111,7 +111,7 @@ bool SourceManager::AttachConsumerBin(const std::string& rtspUrl, GstElement* si
         ghost_pad = "sink_video_test";
         sel = "request_pad_video_test";
     }
-
+    ghost_pad = "sink_consumer";
     const gchar* sinkBinName = gst_element_get_name(sinkBin);
     if (!gst_bin_get_by_name(GST_BIN(sspPipeline), sinkBinName)) {
         gst_bin_add(GST_BIN(sspPipeline), sinkBin);
@@ -152,15 +152,23 @@ bool SourceManager::AttachConsumerBin(const std::string& rtspUrl, GstElement* si
     }
     gst_object_unref(sinkPad);
 
-    if (GstElement* input_selector = gst_bin_get_by_name(GST_BIN(sinkBin), "input_selector")) {
+   /* if (GstElement* input_selector = gst_bin_get_by_name(GST_BIN(sinkBin), "input_selector")) {
         g_object_set(input_selector, "active-pad", NULL, NULL);
         GstPad* active_in = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), sel);
         if (active_in) {
             g_object_set(input_selector, "active-pad", active_in, NULL);
         }
         gst_object_unref(input_selector);
-    }
+    }*/
+    //GstElement* volume = gst_bin_get_by_name(GST_BIN(sspPipeline), "volume");
+    //if (!volume) {
 
+
+    //}
+    //else {
+    //    g_object_set(volume, "volume", 1.0, NULL);
+    //    gst_object_unref(volume);
+    //}
     gst_element_set_state(sspPipeline, GST_STATE_PLAYING);
     gst_element_sync_state_with_parent(sinkBin);
 
@@ -181,7 +189,7 @@ bool SourceManager::DetachConsumerBin(GstElement* sinkBin) {
 
     g_object_set_data(G_OBJECT(sinkBin), "last_tee_pad", nullptr);
 
-    const char* ghost_names[] = { "sink_rtsp_h264", "sink_file_h264", "sink_file_image", "sink_video_test" };
+    const char* ghost_names[] = {"sink_consumer", "sink_rtsp_h264", "sink_file_h264", "sink_file_image", "sink_video_test" };
     for (auto name : ghost_names) {
         if (GstPad* ghostPad = gst_element_get_static_pad(sinkBin, name)) {
             gst_element_remove_pad(sinkBin, ghostPad);
@@ -221,7 +229,7 @@ bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
     
     
     GstPad* branch_sink = nullptr;
-    if ((branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_rtsp_h264")) ||
+    if ((branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_consumer")) ||
         (branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_file_h264")) ||
         (branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_file_image")) ||
         (branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_capture_card")) ||
@@ -245,10 +253,10 @@ bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
         g_object_set_data(G_OBJECT(sinkBin), "last_tee_pad", nullptr);
     }
 
-    if (GstElement* selector = gst_bin_get_by_name(GST_BIN(sinkBin), "input_selector")) {
+   /* if (GstElement* selector = gst_bin_get_by_name(GST_BIN(sinkBin), "input_selector")) {
         g_object_set(selector, "active-pad", NULL, NULL);
         gst_object_unref(selector);
-    }
+    }*/
 
     gst_element_send_event(sinkBin, gst_event_new_flush_start());
     gst_element_send_event(sinkBin, gst_event_new_flush_stop(FALSE));
@@ -257,7 +265,7 @@ bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
         gst_object_unref(parentObj);
         return false;
     }
-    gst_element_set_state(GST_ELEMENT(sspPipeline), GST_STATE_PAUSED);
+    //gst_element_set_state(GST_ELEMENT(sspPipeline), GST_STATE_PAUSED);
     //gst_element_set_state(sinkBin, GST_STATE_NULL);
     g_print("AutoDetachConsumerBin: Successfully detached sinkbin from pipeline.\n");
     return true;

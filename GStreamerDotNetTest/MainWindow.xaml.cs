@@ -298,8 +298,16 @@ namespace GStreamerDotNetTest
             "rtsp://192.168.10.27:10554/screen1",
         };
         string[] urls = {
-
+            //"video://z:/file/17.mp4",
+            //"image://Z:/file/1.jpg",
+            "rtsp://192.168.10.21:10554/screen1",
+            
        //"capture://SC0710 PCI,0",
+       //"capture://SC0710 PCI,4",
+       //"capture://SC0710 PCI,5",
+       //"capture://SC0710 PCI,6",
+       //"capture://SC0710 PCI,7",
+       
        //"capture://SC0710 PCI,2",
 
 
@@ -314,7 +322,7 @@ namespace GStreamerDotNetTest
        //     "capture://SC0710 PCI,9",
        //     "capture://SC0710 PCI,11",
        //     "capture://SC0710 PCI,4",
-            "rtsp://192.168.10.21:10554/screen1",
+            //"rtsp://192.168.10.21:10554/screen1",
             "rtsp://192.168.10.22:10554/screen1",
             "rtsp://192.168.10.23:10554/screen1",
             "rtsp://192.168.10.24:10554/screen1",
@@ -625,7 +633,7 @@ namespace GStreamerDotNetTest
 
             else
             {
-                //SourceManagerWrapper.setInfo();
+                SourceManagerWrapper.setInfo();
 
                 for (int i = 0; i < cb.getCnt(); i++)
                 {
@@ -711,7 +719,7 @@ namespace GStreamerDotNetTest
             //    MessageBox.Show("플레이 중 오류 발생: " + ex.Message);
             //}
 
-            dd += 8;
+            dd +=1;
         }
 
         // 버튼 클릭: RTSP 분기로 detach 후 fakesrc(raw branch)로 재attach 전환
