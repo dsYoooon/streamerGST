@@ -603,12 +603,23 @@ bool SharedSourcePipeline::Init() {
     //gst_bus_add_watch(bus, bus_callback, pipeline_);
     //gst_object_unref(bus);
     StartGLibMainLoop();
-    g_main_context_push_thread_default(global_context);
-    GstBus* bus = gst_element_get_bus(pipeline_);
-    bus_watch_id_ = gst_bus_add_watch(bus, bus_callback, pipeline_);
-    
-    gst_object_unref(bus);
-    g_main_context_pop_thread_default(global_context);
+
+    struct BusWatchData {
+        GstElement* pipeline;
+        guint* watch_id;
+    };
+
+    auto add_bus_watch = [](gpointer user_data) -> gboolean {
+        auto* data = static_cast<BusWatchData*>(user_data);
+        GstBus* bus = gst_element_get_bus(data->pipeline);
+        *(data->watch_id) = gst_bus_add_watch(bus, bus_callback, data->pipeline);
+        gst_object_unref(bus);
+        delete data;
+        return G_SOURCE_REMOVE;
+    };
+
+    BusWatchData* d = new BusWatchData{ pipeline_, &bus_watch_id_ };
+    g_main_context_invoke(global_context, add_bus_watch, d);
     /*  SetPlay();
       if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
           g_printerr("Failed to set pipeline to PLAYING state.\n");
