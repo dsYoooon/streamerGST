@@ -197,7 +197,7 @@ bool SourceManager::AttachConsumerBin(const std::string& rtspUrl, GstElement* si
         g_mutex_unlock(&c->mutex);
         return G_SOURCE_REMOVE;
     };
-    g_main_context_invoke(GetSharedContext(), func, &ctx);
+    g_main_context_invoke(SharedSourcePipeline::GetSharedContext(), func, &ctx);
     while(!ctx.done) g_cond_wait(&ctx.cond, &ctx.mutex);
     g_mutex_unlock(&ctx.mutex);
     g_cond_clear(&ctx.cond);
@@ -321,7 +321,7 @@ bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
         g_mutex_unlock(&c->mutex);
         return G_SOURCE_REMOVE;
     };
-    g_main_context_invoke(GetSharedContext(), func, &ctx);
+    g_main_context_invoke(SharedSourcePipeline::GetSharedContext(), func, &ctx);
     while(!ctx.done) g_cond_wait(&ctx.cond, &ctx.mutex);
     g_mutex_unlock(&ctx.mutex);
     g_cond_clear(&ctx.cond);

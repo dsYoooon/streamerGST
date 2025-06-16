@@ -21,7 +21,7 @@ static std::atomic<int> idxCounter{ 0 };
 static GMainContext* global_context;
 static GMainLoop* global_loop;
 
-GMainContext* GetSharedContext() {
+GMainContext* SharedSourcePipeline::GetSharedContext() {
     return global_context;
 }
 
