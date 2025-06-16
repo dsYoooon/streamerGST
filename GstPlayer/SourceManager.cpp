@@ -151,7 +151,7 @@ bool SourceManager::AttachConsumerBin(const std::string& rtspUrl, GstElement* si
         return false;
     }
     gst_object_unref(sinkPad);
-
+    pipeline->ActivateDecodePad();
    /* if (GstElement* input_selector = gst_bin_get_by_name(GST_BIN(sinkBin), "input_selector")) {
         g_object_set(input_selector, "active-pad", NULL, NULL);
         GstPad* active_in = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), sel);
@@ -216,6 +216,13 @@ bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
         return false;
     }
     GstBin* sspPipeline = GST_BIN(GST_ELEMENT(parentObj));
+    SharedSourcePipeline* pipelineObj = nullptr;
+    for (auto& pair : sources_) {
+        if (pair.second->GetPipeline() == GST_ELEMENT(parentObj)) {
+            pipelineObj = pair.second;
+            break;
+        }
+    }
     GstElement* volume = gst_bin_get_by_name(GST_BIN(sspPipeline), "volume");
     if (!volume) {
         
@@ -251,6 +258,7 @@ bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
             gst_object_unref(tee);
         }
         g_object_set_data(G_OBJECT(sinkBin), "last_tee_pad", nullptr);
+        if (pipelineObj) pipelineObj->ActivateFakePad();
     }
 
    /* if (GstElement* selector = gst_bin_get_by_name(GST_BIN(sinkBin), "input_selector")) {

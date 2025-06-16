@@ -48,7 +48,8 @@ public:
     void CheckPipeline();
     // 최상위 GstPipeline(SSP)을 반환 (동적 연결용)
     GstElement* GetPipeline() const { return pipeline_; }
-
+    void ActivateDecodePad();
+    void ActivateFakePad();
     // 파이프라인 종료 및 정리
     void Shutdown();
 
@@ -75,7 +76,9 @@ private:
     GstElement* parse_;
     // 기존 decoder_ 멤버는 소비자 bin으로 이동하므로 제거합니다.
     GstElement* tee_;
-
+    GstElement* selector_ = nullptr;
+    GstPad* selectorDecodePad_ = nullptr;
+    GstPad* selectorFakePad_ = nullptr;
 
     // 캡쳐 소스용 QCAP 장치 핸들 (SSP 내부에서 독립적으로 관리)
     PVOID qcapDevice_;

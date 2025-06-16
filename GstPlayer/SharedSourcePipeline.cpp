@@ -900,7 +900,8 @@ bool SharedSourcePipeline::CreateRTSPBranch(GstElement** branchOut) {
     GstElement* qv1 = gst_element_factory_make("queue", "video_q_rtsp1");
     GstElement* dec = SetDeco(idxCounter.fetch_add(1), "dec");
         //gst_element_factory_make("nvh264dec", "h264_decode");
-    
+    selector_ = gst_element_factory_make("output-selector", "selector_rtsp_h264");
+    GstElement* preFake = gst_element_factory_make("fakesink", "pre_fakesink");
     GstElement* conv = gst_element_factory_make("videoconvert", "convert");
     GstElement* rate = gst_element_factory_make("videorate", "rate");
     GstElement* caps = gst_element_factory_make("capsfilter", "caps");
@@ -913,15 +914,25 @@ bool SharedSourcePipeline::CreateRTSPBranch(GstElement** branchOut) {
     gst_caps_unref(fps_caps);
     set_queue_limits(qv);
     set_queue_limits(qv1);
-    gst_bin_add_many(GST_BIN(pipeline_), rtspsrc_, qv, depay, parse, qv1, dec,rate,caps, conv, NULL);
+    gst_bin_add_many(GST_BIN(pipeline_), rtspsrc_, qv, depay, parse, qv1, selector_, dec, rate, caps, conv, preFake, NULL);
     g_object_set(G_OBJECT(rtspsrc_), "location", rtspUrl_.c_str(), "latency", 0,
         "drop-on-latency", TRUE,
         NULL);
-    if (!gst_element_link_many(qv, depay, parse, qv1, dec,
-        //conv, 
-        rate,caps,
-        NULL)) {
+    if (!gst_element_link_many(qv, depay, parse, qv1, selector_, NULL)) {
         g_printerr("Failed to link RTSP branch: depay -> parse.\n");
+        return false;
+    }
+    selectorDecodePad_ = gst_element_request_pad_simple(selector_, "src_%u");
+    selectorFakePad_ = gst_element_request_pad_simple(selector_, "src_%u");
+    GstPad* decSink = gst_element_get_static_pad(dec, "sink");
+    GstPad* fakeSink = gst_element_get_static_pad(preFake, "sink");
+    gst_pad_link(selectorDecodePad_, decSink);
+    gst_pad_link(selectorFakePad_, fakeSink);
+    gst_object_unref(decSink);
+    gst_object_unref(fakeSink);
+    g_object_set(selector_, "active-pad", selectorDecodePad_, NULL);
+    if (!gst_element_link_many(dec, rate, caps, NULL)) {
+        g_printerr("Failed to link decode chain.\n");
         return false;
     }
     // rtspsrc의 동적 패드를 depay에 연결
@@ -1089,4 +1100,15 @@ void SharedSourcePipeline::SetVolume(double vol) {
     g_object_set(volume, "volume", vol, NULL);
     gst_object_unref(volume);
 
+
+}
+
+void SharedSourcePipeline::ActivateDecodePad() {
+    if (selector_ && selectorDecodePad_)
+        g_object_set(selector_, "active-pad", selectorDecodePad_, NULL);
+}
+
+void SharedSourcePipeline::ActivateFakePad() {
+    if (selector_ && selectorFakePad_)
+        g_object_set(selector_, "active-pad", selectorFakePad_, NULL);
 }

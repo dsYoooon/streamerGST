@@ -323,23 +323,23 @@ namespace GStreamerDotNetTest
        //     "capture://SC0710 PCI,11",
        //     "capture://SC0710 PCI,4",
             //"rtsp://192.168.10.21:10554/screen1",
-            "rtsp://192.168.10.22:10554/screen1",
-            "rtsp://192.168.10.23:10554/screen1",
-            "rtsp://192.168.10.24:10554/screen1",
-            "rtsp://192.168.10.25:10554/screen1",
-            "rtsp://192.168.10.26:10554/screen1",
-            "rtsp://192.168.10.27:10554/screen1",
-            //////"rtsp://admin:admin@192.168.10.125:554/hdmi1",
-            ////  "rtsp://admin:admin@192.168.10.122:554/hdmi1",
-            "rtsp://admin:admin@192.168.10.123:554/hdmi1",
-            "rtsp://admin:admin@192.168.10.124:554/hdmi1",
+            //"rtsp://192.168.10.22:10554/screen1",
+            //"rtsp://192.168.10.23:10554/screen1",
+            //"rtsp://192.168.10.24:10554/screen1",
+            //"rtsp://192.168.10.25:10554/screen1",
+            //"rtsp://192.168.10.26:10554/screen1",
+            //"rtsp://192.168.10.27:10554/screen1",
+            ////////"rtsp://admin:admin@192.168.10.125:554/hdmi1",
+            //////  "rtsp://admin:admin@192.168.10.122:554/hdmi1",
+            //"rtsp://admin:admin@192.168.10.123:554/hdmi1",
+            //"rtsp://admin:admin@192.168.10.124:554/hdmi1",
 
-                        "rtsp://admin:opticis031!@192.168.10.66/Streaming/Channels/101",
-            "rtsp://admin:opticis031!@192.168.10.69/Streaming/Channels/101",
-            "rtsp://admin:opticis031!@192.168.10.70/Streaming/Channels/101",
-            "rtsp://admin:opticis031!@192.168.10.72/Streaming/Channels/101",
-            "rtsp://admin:opticis031!@192.168.10.75/Streaming/Channels/101",
-            "rtsp://admin:opticis031!@192.168.10.76/Streaming/Channels/101",
+            //            "rtsp://admin:opticis031!@192.168.10.66/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.69/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.70/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.72/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.75/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.76/Streaming/Channels/101",
 
             //   "capture://SC0710 PCI,4",
             //"capture://SC0710 PCI,5",
@@ -460,7 +460,7 @@ namespace GStreamerDotNetTest
             //"image://C:/shared/file/1.jpg",
         };
         int dd = 0;
-        int cnt = 16;
+        int cnt = 1;
         int shiftnum = 0;
         private Timer _timer;
         bool isStart = false;
