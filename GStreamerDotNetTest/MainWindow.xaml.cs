@@ -192,24 +192,28 @@ namespace GStreamerDotNetTest
                 //    }
                 //    return null; // 실패 시 null 반환
                 //}));
-                ConsumerBinWrapper consumer = new ConsumerBinWrapper(
-                        ((idx+0) / 4 ) * width, (idx % 4) * height, width,
+                Application.Current.Dispatcher.Invoke(new Action(() =>
+                {
+                    ConsumerBinWrapper consumer = new ConsumerBinWrapper(
+                        ((idx + 0) / 4) * width, (idx % 4) * height, width,
                         height, idx);
 
-                consumer.Init(); // Init()이 내부적으로 GStreamer 파이프라인을 초기화한다면
-                consumerBins.Add(consumer);
+                    consumer.Init(); // Init()이 내부적으로 GStreamer 파이프라인을 초기화한다면
+                    consumerBins.Add(consumer);
+                }));
+
             }
 
             // 모든 Init 작업이 완료될 때까지 비동기적으로 대기
-            var initializedConsumers = await Task.WhenAll(initTasks);
+            //var initializedConsumers = await Task.WhenAll(initTasks);
 
-            foreach (var consumer in initializedConsumers)
-            {
-                if (consumer != null)
-                {
-                    consumerBins.Add(consumer);
-                }
-            }
+            //foreach (var consumer in initializedConsumers)
+            //{
+            //    if (consumer != null)
+            //    {
+            //        consumerBins.Add(consumer);
+            //    }
+            //}
             Debug.WriteLine($"ConsumerBins initialized. Total: {consumerBins.Count}");
             await Task.Delay(17);
             var attachTasks = new List<Task>();
@@ -222,9 +226,10 @@ namespace GStreamerDotNetTest
                 //SourceManagerWrapper.set
                 attachTasks.Add(Task.Run(() =>
                 {
-                     
-                    SourceManagerWrapper.AttachConsumerBin("fakesrc://", currentConsumer.GetBin(), false);
-                    
+                    Application.Current.Dispatcher.Invoke(new Action(() =>
+                    {
+                        SourceManagerWrapper.AttachConsumerBin("fakesrc://", currentConsumer.GetBin(), false);
+                    }));
                 }));
                 //currentConsumer.ShowWin(false);
             }
@@ -322,24 +327,24 @@ namespace GStreamerDotNetTest
        //     "capture://SC0710 PCI,9",
        //     "capture://SC0710 PCI,11",
        //     "capture://SC0710 PCI,4",
-            //"rtsp://192.168.10.21:10554/screen1",
-            //"rtsp://192.168.10.22:10554/screen1",
-            //"rtsp://192.168.10.23:10554/screen1",
-            //"rtsp://192.168.10.24:10554/screen1",
-            //"rtsp://192.168.10.25:10554/screen1",
-            //"rtsp://192.168.10.26:10554/screen1",
-            //"rtsp://192.168.10.27:10554/screen1",
-            //////"rtsp://admin:admin@192.168.10.125:554/hdmi1",
-            ////  "rtsp://admin:admin@192.168.10.122:554/hdmi1",
-            //"rtsp://admin:admin@192.168.10.123:554/hdmi1",
-            //"rtsp://admin:admin@192.168.10.124:554/hdmi1",
+            "rtsp://192.168.10.21:10554/screen1",
+            "rtsp://192.168.10.22:10554/screen1",
+            "rtsp://192.168.10.23:10554/screen1",
+            "rtsp://192.168.10.24:10554/screen1",
+            "rtsp://192.168.10.25:10554/screen1",
+            "rtsp://192.168.10.26:10554/screen1",
+            "rtsp://192.168.10.27:10554/screen1",
+            ////"rtsp://admin:admin@192.168.10.125:554/hdmi1",
+            //  "rtsp://admin:admin@192.168.10.122:554/hdmi1",
+            "rtsp://admin:admin@192.168.10.123:554/hdmi1",
+            "rtsp://admin:admin@192.168.10.124:554/hdmi1",
 
                         "rtsp://admin:opticis031!@192.168.10.66/Streaming/Channels/101",
             "rtsp://admin:opticis031!@192.168.10.69/Streaming/Channels/101",
-            //"rtsp://admin:opticis031!@192.168.10.70/Streaming/Channels/101",
-            //"rtsp://admin:opticis031!@192.168.10.72/Streaming/Channels/101",
-            //"rtsp://admin:opticis031!@192.168.10.75/Streaming/Channels/101",
-            //"rtsp://admin:opticis031!@192.168.10.76/Streaming/Channels/101",
+            "rtsp://admin:opticis031!@192.168.10.70/Streaming/Channels/101",
+            "rtsp://admin:opticis031!@192.168.10.72/Streaming/Channels/101",
+            "rtsp://admin:opticis031!@192.168.10.75/Streaming/Channels/101",
+            "rtsp://admin:opticis031!@192.168.10.76/Streaming/Channels/101",
 
             //   "capture://SC0710 PCI,4",
             //"capture://SC0710 PCI,5",
@@ -460,7 +465,7 @@ namespace GStreamerDotNetTest
             //"image://C:/shared/file/1.jpg",
         };
         int dd = 0;
-        int cnt = 2;
+        int cnt = 16;
         int shiftnum = 0;
         private Timer _timer;
         bool isStart = false;

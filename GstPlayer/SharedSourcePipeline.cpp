@@ -18,6 +18,8 @@ static std::thread glibMainLoopThread;
 static std::atomic<bool> glibMainLoopStarted{ false };
 static std::once_flag glibMainLoopFlag;
 static std::atomic<int> idxCounter{ 0 };
+static GMainContext* global_context;
+static GMainLoop* global_loop;
 static HWND CreatePlaybackWindow(int left, int top, int width, int height) {
     const wchar_t CLASS_NAME[] = L"GStreamer Playback Window";
     static bool registered = false;
@@ -40,7 +42,22 @@ static HWND CreatePlaybackWindow(int left, int top, int width, int height) {
         NULL
     );
 }
+struct StateChange {
+    GstElement* pipeline;
+    GstState     target_state;
+};
 
+static gboolean _idle_change_state(gpointer user_data) {
+    auto* d = static_cast<StateChange*>(user_data);
+    gst_element_set_state(d->pipeline, d->target_state);
+    delete d;
+    return G_SOURCE_REMOVE;
+}
+void schedule_set_state(GstElement* pipe, GstState state) {
+    auto* data = new StateChange{ pipe, state };
+    // global_context 위에서 실행돼야 하므로 g_main_context_invoke 사용
+    g_main_context_invoke(global_context, _idle_change_state, data);
+}
 bool Wait_for_state(GstElement* element, GstState desiredState, guint timeout_ms) {
     GstState current, pending;
     GstClockTime timeout = timeout_ms * GST_MSECOND;
@@ -69,7 +86,7 @@ GstElement* SetDeco(int localIndex, const char* name) {
 }
 static void set_queue_limits(GstElement* q) {
     g_object_set(q,
-        "max-size-buffers", 10,
+        "max-size-buffers", 15,
         "max-size-bytes", 0,
         "max-size-time", 0,
         "leaky", 2,
@@ -88,7 +105,7 @@ SharedSourcePipeline::SharedSourcePipeline(const std::string& rtspUrl)
     if (!gstInitialized) {
         //g_slice_set_config(G_SLICE_CONFIG_ALWAYS_MALLOC, TRUE);
         gst_init(nullptr, nullptr);
-        gst_debug_set_default_threshold(GST_LEVEL_INFO);
+//        gst_debug_set_default_threshold(GST_LEVEL_INFO);
         GstRegistry* reg = gst_registry_get();
         gst_registry_scan_path(
             reg,
@@ -183,7 +200,7 @@ static void ensure_dynamic_audio_chain(
     // 4) 파이프라인에 추가
 
     if (jitter)
-        g_object_set(jitter, "latency", 0, NULL);
+        g_object_set(jitter, "latency", 50, NULL);
 
     // 5) 부모 상태와 동기화
     for (auto e : { queue, jitter, valve, decode, convert, resample, volume, sink })
@@ -419,11 +436,15 @@ void StartGLibMainLoop() {
     std::call_once(glibMainLoopFlag, []() {
     /*if (!glibMainLoopStarted.load()) {
         glibMainLoopStarted = true;*/
+        global_context = g_main_context_new();
+        global_loop = g_main_loop_new(global_context, FALSE);
+        //GMainLoop* global_loop = g_main_loop_new(global_context, FALSE);
         glibMainLoopThread = std::thread([]() {
-            GMainLoop* mainLoop = g_main_loop_new(nullptr, FALSE);
-            g_print("GLib Main Loop started.\n");
-            g_main_loop_run(mainLoop);
-            g_main_loop_unref(mainLoop);
+            
+            g_main_context_push_thread_default(global_context);
+            g_main_loop_run(global_loop);
+            g_main_loop_unref(global_loop);
+            g_main_context_unref(global_context);
             });
         });
 }
@@ -520,7 +541,7 @@ bool SharedSourcePipeline::Init() {
         return false;
     }
 
-    g_object_set(fakesink, "async", false, "sync", false, NULL);
+    g_object_set(fakesink, "async", false, NULL);
     // 티와 fakesink 연결 (request pad 방식)
 
 
@@ -583,7 +604,8 @@ bool SharedSourcePipeline::Init() {
           g_printerr("Failed to set pipeline to PLAYING state.\n");
           return false;
       }*/
-    gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+    schedule_set_state(pipeline_, GST_STATE_PLAYING);
+    //gst_element_set_state(pipeline_, GST_STATE_PLAYING);
     const guint pollInterval = 67;
     guint elapsed = 0;
     while (!Wait_for_state(pipeline_, GST_STATE_PLAYING, pollInterval) && elapsed < 10000) {
@@ -913,20 +935,22 @@ bool SharedSourcePipeline::CreateRTSPBranch(GstElement** branchOut) {
     }
     GstCaps* fps_caps = gst_caps_from_string("video/x-raw,framerate=60/1");
     g_object_set(caps, "caps", fps_caps, NULL);
+    g_object_set(parse, "config-interval", 1, NULL);
     gst_caps_unref(fps_caps);
     set_queue_limits(qv);
     set_queue_limits(qv1);
     set_queue_limits(que);
     set_queue_limits(qued);
     gst_bin_add_many(GST_BIN(pipeline_), rtspsrc_, qv, depay, parse, qv1, selector_, que,qued,  dec, rate, caps, conv, preFake, NULL);
-    g_object_set(G_OBJECT(rtspsrc_), "location", rtspUrl_.c_str(), "latency", 300,
+    g_object_set(G_OBJECT(rtspsrc_), "location", rtspUrl_.c_str(), "latency", 34,
         //"drop-on-latency", TRUE,
         NULL);
-    if (!gst_element_link_many(qv, depay, parse, qv1, selector_, NULL)) {
+    //g_object_set(G_OBJECT(dec), "qos", false, NULL);
+    if (!gst_element_link_many(qv, depay, parse, selector_, NULL)) {
         g_printerr("Failed to link RTSP branch: depay -> parse.\n");
         return false;
     }
-    gst_element_link(que, preFake);
+    //gst_element_link(que, preFake);
     if (!gst_element_link_many(qued, dec, 
         //rate, caps, 
         NULL)) {
@@ -936,8 +960,8 @@ bool SharedSourcePipeline::CreateRTSPBranch(GstElement** branchOut) {
     selectorDecodePad_ = gst_element_request_pad_simple(selector_, "src_%u");
     selectorFakePad_ = gst_element_request_pad_simple(selector_, "src_%u");
     GstPad* decSink = gst_element_get_static_pad(qued, "sink");
-    GstPad* fakeSink = gst_element_get_static_pad(que, "sink");
-    g_object_set(fakeSink, "async", false, "sync",false, NULL);
+    GstPad* fakeSink = gst_element_get_static_pad(preFake, "sink");
+    g_object_set(preFake, "async", false,  NULL);
     gst_pad_link(selectorDecodePad_, decSink);
     gst_pad_link(selectorFakePad_, fakeSink);
     gst_object_unref(decSink);
