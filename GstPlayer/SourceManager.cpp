@@ -1,5 +1,6 @@
 #include "SourceManager.h"
 #include <gst/gst.h>
+#include <glib.h>
 
 SourceManager& SourceManager::Instance() {
     static SourceManager instance;
@@ -7,11 +8,11 @@ SourceManager& SourceManager::Instance() {
 }
 
 SourceManager::SourceManager() {
-    // ÇÊ¿äÇÑ ÃÊ±âÈ­ ÀÛ¾÷ÀÌ ÀÖ´Ù¸é Ãß°¡
+    // í•„ìš”í•œ ì´ˆê¸°í™” ì‘ì—…ì´ ìˆë‹¤ë©´ ì¶”ê°€
 }
 
 SourceManager::~SourceManager() {
-    // ¸ğµç °øÀ¯ ¼Ò½º¸¦ Á¤¸®
+    // ëª¨ë“  ê³µìœ  ì†ŒìŠ¤ë¥¼ ì •ë¦¬
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto& pair : sources_) {
         pair.second->Shutdown();
@@ -26,7 +27,7 @@ SharedSourcePipeline* SourceManager::GetOrCreateSource(const std::string& rtspUr
     if (it != sources_.end()) {
         return it->second;
     }
-    // »õ·Î¿î SharedSourcePipeline »ı¼º
+    // ìƒˆë¡œìš´ SharedSourcePipeline ìƒì„±
     SharedSourcePipeline* pipeline = new SharedSourcePipeline(rtspUrl);
     if (pipeline->Init()) {
         sources_[rtspUrl] = pipeline;
@@ -64,7 +65,7 @@ void SourceManager::SetVolume(const std::string& rtspUrl, double vol) {
     }
 }
 
-bool SourceManager::AttachConsumerBin(const std::string& rtspUrl, GstElement* sinkBin, bool useRTSPBranch) {
+bool SourceManager::AttachConsumerBinInternal(const std::string& rtspUrl, GstElement* sinkBin, bool useRTSPBranch) {
     if (!sinkBin) {
         g_printerr("AttachConsumerBin: sink bin is null\n");
         return false;
@@ -180,6 +181,31 @@ bool SourceManager::AttachConsumerBin(const std::string& rtspUrl, GstElement* si
     return true;
 }
 
+bool SourceManager::AttachConsumerBin(const std::string& rtspUrl, GstElement* sinkBin, bool useRTSPBranch) {
+    struct Ctx { SourceManager* obj; const std::string* url; GstElement* bin; bool useBranch; bool result; GCond cond; GMutex mutex; bool done; };
+    Ctx ctx{this, &rtspUrl, sinkBin, useRTSPBranch, false};
+    g_cond_init(&ctx.cond);
+    g_mutex_init(&ctx.mutex);
+    ctx.done = false;
+    g_mutex_lock(&ctx.mutex);
+    auto func = [](gpointer data)->gboolean {
+        Ctx* c = static_cast<Ctx*>(data);
+        c->result = c->obj->AttachConsumerBinInternal(*c->url, c->bin, c->useBranch);
+        g_mutex_lock(&c->mutex);
+        c->done = true;
+        g_cond_signal(&c->cond);
+        g_mutex_unlock(&c->mutex);
+        return G_SOURCE_REMOVE;
+    };
+    g_main_context_invoke(GetSharedContext(), func, &ctx);
+    while(!ctx.done) g_cond_wait(&ctx.cond, &ctx.mutex);
+    g_mutex_unlock(&ctx.mutex);
+    g_cond_clear(&ctx.cond);
+    g_mutex_clear(&ctx.mutex);
+    return ctx.result;
+}
+
+
 bool SourceManager::DetachConsumerBin(GstElement* sinkBin) {
     if (!sinkBin) {
         g_printerr("DetachConsumerBin: sink bin is null\n");
@@ -202,7 +228,7 @@ bool SourceManager::DetachConsumerBin(GstElement* sinkBin) {
     return true;
 }
 
-bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
+bool SourceManager::AutoDetachConsumerBinInternal(GstElement* sinkBin) {
     if (!sinkBin) {
         g_printerr("AutoDetachConsumerBin: Sink bin is null.\n");
         return false;
@@ -277,6 +303,30 @@ bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
     //gst_element_set_state(sinkBin, GST_STATE_NULL);
     g_print("AutoDetachConsumerBin: Successfully detached sinkbin from pipeline.\n");
     return true;
+}
+
+bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
+    struct Ctx { SourceManager* obj; GstElement* bin; bool result; GCond cond; GMutex mutex; bool done; };
+    Ctx ctx{this, sinkBin, false};
+    g_cond_init(&ctx.cond);
+    g_mutex_init(&ctx.mutex);
+    ctx.done = false;
+    g_mutex_lock(&ctx.mutex);
+    auto func = [](gpointer data)->gboolean {
+        Ctx* c = static_cast<Ctx*>(data);
+        c->result = c->obj->AutoDetachConsumerBinInternal(c->bin);
+        g_mutex_lock(&c->mutex);
+        c->done = true;
+        g_cond_signal(&c->cond);
+        g_mutex_unlock(&c->mutex);
+        return G_SOURCE_REMOVE;
+    };
+    g_main_context_invoke(GetSharedContext(), func, &ctx);
+    while(!ctx.done) g_cond_wait(&ctx.cond, &ctx.mutex);
+    g_mutex_unlock(&ctx.mutex);
+    g_cond_clear(&ctx.cond);
+    g_mutex_clear(&ctx.mutex);
+    return ctx.result;
 }
 
 void SourceManager::ReleaseSource(const std::string& rtspUrl) {
