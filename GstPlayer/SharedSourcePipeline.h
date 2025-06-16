@@ -58,6 +58,7 @@ public:
     void SetVolume(double vol);
     //HWND CreatePlaybackWindow(int left, int top, int width, int height);
 private:
+    int sourceIdx = 0;
     bool isMute = true;
     double CaptureFPS;
     HWND  windowHandle;

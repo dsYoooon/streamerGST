@@ -66,27 +66,30 @@ bool Wait_for_state(GstElement* element, GstState desiredState, guint timeout_ms
 }
 GstElement* SetDeco(int localIndex, const char* name) {
     GstElement* dec = nullptr;
-    switch (localIndex % 4) {
-    case 0: dec = gst_element_factory_make("nvh264device1dec", name);
+    
+    /*switch (localIndex % 4) {
+    case 3: dec = gst_element_factory_make("nvh264device1dec", name);
         break;
-    case 1: dec = gst_element_factory_make("nvh264device2dec", name);
+    case 0: dec = gst_element_factory_make("d3d11h264dec", name);
         break;
-    case 2: dec = gst_element_factory_make("nvh264device3dec", name);
+    case 1: dec = gst_element_factory_make("d3d11h264dec", name);
         break;
-    case 3: dec = gst_element_factory_make("nvh264dec", name);
+    case 2: dec = gst_element_factory_make("nvh264device1dec", name);
         break;
     default: dec = gst_element_factory_make("nvh264dec", name);
         break;
     }
     if (!dec) {
         dec = gst_element_factory_make("d3d11h264dec", name);
-    }
+    }*/
+    //dec = gst_element_factory_make("nvh264dec", name);
+    dec = gst_element_factory_make("nvh264device1dec", name);
     //dec = gst_element_factory_make("d3d11h264dec", name);
     return dec;
 }
 static void set_queue_limits(GstElement* q) {
     g_object_set(q,
-        "max-size-buffers", 15,
+        "max-size-buffers", 30,
         "max-size-bytes", 0,
         "max-size-time", 0,
         "leaky", 2,
@@ -103,8 +106,10 @@ SharedSourcePipeline::SharedSourcePipeline(const std::string& rtspUrl)
 {
     static bool gstInitialized = false;
     if (!gstInitialized) {
+        
         //g_slice_set_config(G_SLICE_CONFIG_ALWAYS_MALLOC, TRUE);
         gst_init(nullptr, nullptr);
+        gst_debug_set_threshold_for_name("QOS", GST_LEVEL_MEMDUMP);
 //        gst_debug_set_default_threshold(GST_LEVEL_INFO);
         GstRegistry* reg = gst_registry_get();
         gst_registry_scan_path(
@@ -434,6 +439,7 @@ static gboolean bus_callback(GstBus* bus, GstMessage* msg, gpointer data) {
  //GLib 메인 루프를 별도 스레드에서 실행 (RTSP 파이프라인 전용)
 void StartGLibMainLoop() {
     std::call_once(glibMainLoopFlag, []() {
+        g_print("    startglmainloop      %d", idxCounter.load());
     /*if (!glibMainLoopStarted.load()) {
         glibMainLoopStarted = true;*/
         global_context = g_main_context_new();
@@ -576,9 +582,7 @@ bool SharedSourcePipeline::Init() {
             g_printerr("Failed to link branch output to tee.\n");
             return false;
         }
-        GstBus* bus = gst_element_get_bus(pipeline_);
-        gst_bus_add_watch(bus, bus_callback, pipeline_);
-        gst_object_unref(bus);
+ 
         //mainCont = g_main_context_new();
         //mainLoop_ = g_main_loop_new(mainCont,FALSE);
         //mainLoopThread = std::thread([this]() {
@@ -599,6 +603,11 @@ bool SharedSourcePipeline::Init() {
     //gst_bus_add_watch(bus, bus_callback, pipeline_);
     //gst_object_unref(bus);
     StartGLibMainLoop();
+    g_main_context_push_thread_default(global_context);
+    GstBus* bus = gst_element_get_bus(pipeline_);
+    gst_bus_add_watch(bus, bus_callback, pipeline_);
+    gst_object_unref(bus);
+    g_main_context_pop_thread_default(global_context);
     /*  SetPlay();
       if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
           g_printerr("Failed to set pipeline to PLAYING state.\n");
@@ -920,7 +929,9 @@ bool SharedSourcePipeline::CreateRTSPBranch(GstElement** branchOut) {
     GstElement* depay = gst_element_factory_make("rtph264depay", "h264_depay");
     GstElement* parse = gst_element_factory_make("h264parse", "h264_parse");
     GstElement* qv1 = gst_element_factory_make("queue", "video_q_rtsp1");
+    sourceIdx = idxCounter.load();
     GstElement* dec = SetDeco(idxCounter.fetch_add(1), "dec");
+    
         //gst_element_factory_make("nvh264dec", "h264_decode");
     selector_ = gst_element_factory_make("output-selector", "selector_rtsp_h264");
     GstElement* que = gst_element_factory_make("queue", "fakeque");

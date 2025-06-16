@@ -629,6 +629,7 @@ namespace GStreamerDotNetTest
         private async void StartButton_Click(object sender, RoutedEventArgs e)
         {
             isStart = true;
+            
             var attachTasks = new List<Task>();
             if (cb.getCnt() == 0)
             {
