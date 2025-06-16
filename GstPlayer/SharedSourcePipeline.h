@@ -83,9 +83,10 @@ private:
     // 캡쳐 소스용 QCAP 장치 핸들 (SSP 내부에서 독립적으로 관리)
     PVOID qcapDevice_;
 
-// 현재 파이프라인들이 공유하는 GLib 메인 컨텍스트를 가져온다
-GMainContext* GetSharedContext();
-
+public:
+    // 현재 파이프라인들이 공유하는 GLib 메인 컨텍스트를 가져온다
+    static GMainContext* GetSharedContext();
+private:
     // QCAP SDK 함수 타입 정의
     typedef int (WINAPI* PFN_QCAP_CREATE)(CHAR*, int, void*, PVOID*, BOOL, BOOL);
     typedef int (WINAPI* PFN_QCAP_REGISTER_VIDEO_PREVIEW_CALLBACK)(PVOID, void*, PVOID);
