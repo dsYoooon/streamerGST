@@ -20,6 +20,11 @@ static std::once_flag glibMainLoopFlag;
 static std::atomic<int> idxCounter{ 0 };
 static GMainContext* global_context;
 static GMainLoop* global_loop;
+
+GMainContext* GetSharedContext() {
+    return global_context;
+}
+
 static HWND CreatePlaybackWindow(int left, int top, int width, int height) {
     const wchar_t CLASS_NAME[] = L"GStreamer Playback Window";
     static bool registered = false;
