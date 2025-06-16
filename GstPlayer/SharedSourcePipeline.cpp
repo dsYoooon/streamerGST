@@ -605,7 +605,8 @@ bool SharedSourcePipeline::Init() {
     StartGLibMainLoop();
     g_main_context_push_thread_default(global_context);
     GstBus* bus = gst_element_get_bus(pipeline_);
-    gst_bus_add_watch(bus, bus_callback, pipeline_);
+    bus_watch_id_ = gst_bus_add_watch(bus, bus_callback, pipeline_);
+    
     gst_object_unref(bus);
     g_main_context_pop_thread_default(global_context);
     /*  SetPlay();
@@ -1070,6 +1071,10 @@ void SharedSourcePipeline::CheckPipeline() {
 
 void SharedSourcePipeline::Shutdown() {
     if (pipeline_) {
+        if (bus_watch_id_ != 0) {
+            g_source_remove(bus_watch_id_);
+            bus_watch_id_ = 0;
+        }
         gst_element_set_state(pipeline_, GST_STATE_NULL);
         gst_object_unref(pipeline_);
         pipeline_ = nullptr;

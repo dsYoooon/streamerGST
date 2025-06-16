@@ -104,6 +104,7 @@ private:
     std::thread mainLoopThread;
     GMainLoop* mainLoop_ = nullptr;
     GMainContext* mainCont = nullptr;
+    guint bus_watch_id_ = 0;
 
 };
 
