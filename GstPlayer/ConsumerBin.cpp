@@ -50,7 +50,7 @@ static std::atomic<int> consumerCounter{ 0 };
 // 전역 디코더 선택을 위한 index 변수 (전역 index 증가)
 static void set_queue_limits(GstElement* q) {
     g_object_set(q,
-        "max-size-buffers", 30,
+        "max-size-buffers", 10,
         "max-size-bytes", 0,
         "max-size-time", 0,
         "leaky", 2, 

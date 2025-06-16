@@ -72,21 +72,21 @@ bool Wait_for_state(GstElement* element, GstState desiredState, guint timeout_ms
 GstElement* SetDeco(int localIndex, const char* name) {
     GstElement* dec = nullptr;
     
-    /*switch (localIndex % 4) {
+    switch (localIndex % 3) {
     case 3: dec = gst_element_factory_make("nvh264device1dec", name);
         break;
-    case 0: dec = gst_element_factory_make("d3d11h264dec", name);
+    case 0: dec = gst_element_factory_make("nvh264device2dec", name);
         break;
-    case 1: dec = gst_element_factory_make("d3d11h264dec", name);
+    case 1: dec = gst_element_factory_make("nvh264dec", name);
         break;
-    case 2: dec = gst_element_factory_make("nvh264device1dec", name);
+    case 2: dec = gst_element_factory_make("nvh264device3dec", name);
         break;
     default: dec = gst_element_factory_make("nvh264dec", name);
         break;
     }
     if (!dec) {
         dec = gst_element_factory_make("d3d11h264dec", name);
-    }*/
+    }
     //dec = gst_element_factory_make("nvh264dec", name);
     dec = gst_element_factory_make("nvh264device1dec", name);
     //dec = gst_element_factory_make("d3d11h264dec", name);
@@ -94,7 +94,7 @@ GstElement* SetDeco(int localIndex, const char* name) {
 }
 static void set_queue_limits(GstElement* q) {
     g_object_set(q,
-        "max-size-buffers", 30,
+        "max-size-buffers", 10,
         "max-size-bytes", 0,
         "max-size-time", 0,
         "leaky", 2,

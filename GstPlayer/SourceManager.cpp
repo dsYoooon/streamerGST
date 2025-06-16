@@ -191,10 +191,11 @@ bool SourceManager::AttachConsumerBin(const std::string& rtspUrl, GstElement* si
     auto func = [](gpointer data)->gboolean {
         Ctx* c = static_cast<Ctx*>(data);
         c->result = c->obj->AttachConsumerBinInternal(*c->url, c->bin, c->useBranch);
-        g_mutex_lock(&c->mutex);
+        
         c->done = true;
+        
         g_cond_signal(&c->cond);
-        g_mutex_unlock(&c->mutex);
+        
         return G_SOURCE_REMOVE;
     };
     g_main_context_invoke(SharedSourcePipeline::GetSharedContext(), func, &ctx);
@@ -315,10 +316,11 @@ bool SourceManager::AutoDetachConsumerBin(GstElement* sinkBin) {
     auto func = [](gpointer data)->gboolean {
         Ctx* c = static_cast<Ctx*>(data);
         c->result = c->obj->AutoDetachConsumerBinInternal(c->bin);
-        g_mutex_lock(&c->mutex);
+        
         c->done = true;
+        
         g_cond_signal(&c->cond);
-        g_mutex_unlock(&c->mutex);
+        g_usleep(50000);
         return G_SOURCE_REMOVE;
     };
     g_main_context_invoke(SharedSourcePipeline::GetSharedContext(), func, &ctx);
