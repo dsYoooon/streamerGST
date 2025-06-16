@@ -919,8 +919,8 @@ bool SharedSourcePipeline::CreateRTSPBranch(GstElement** branchOut) {
     set_queue_limits(que);
     set_queue_limits(qued);
     gst_bin_add_many(GST_BIN(pipeline_), rtspsrc_, qv, depay, parse, qv1, selector_, que,qued,  dec, rate, caps, conv, preFake, NULL);
-    g_object_set(G_OBJECT(rtspsrc_), "location", rtspUrl_.c_str(), "latency", 0,
-        "drop-on-latency", TRUE,
+    g_object_set(G_OBJECT(rtspsrc_), "location", rtspUrl_.c_str(), "latency", 300,
+        //"drop-on-latency", TRUE,
         NULL);
     if (!gst_element_link_many(qv, depay, parse, qv1, selector_, NULL)) {
         g_printerr("Failed to link RTSP branch: depay -> parse.\n");

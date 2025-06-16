@@ -139,8 +139,7 @@ bool ConsumerBin::Init() {
         "enable-last-sample", false,
         //"force-aspect-ratio", false,
         "sync", TRUE,
-        "render-delay", 0,
-        "max-lateness", 0,
+        
         NULL);
 
     gst_bin_add_many(GST_BIN(consumerBin_), que, overlay, sink, NULL);

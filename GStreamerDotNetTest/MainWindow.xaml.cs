@@ -336,10 +336,10 @@ namespace GStreamerDotNetTest
 
                         "rtsp://admin:opticis031!@192.168.10.66/Streaming/Channels/101",
             "rtsp://admin:opticis031!@192.168.10.69/Streaming/Channels/101",
-            "rtsp://admin:opticis031!@192.168.10.70/Streaming/Channels/101",
-            "rtsp://admin:opticis031!@192.168.10.72/Streaming/Channels/101",
-            "rtsp://admin:opticis031!@192.168.10.75/Streaming/Channels/101",
-            "rtsp://admin:opticis031!@192.168.10.76/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.70/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.72/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.75/Streaming/Channels/101",
+            //"rtsp://admin:opticis031!@192.168.10.76/Streaming/Channels/101",
 
             //   "capture://SC0710 PCI,4",
             //"capture://SC0710 PCI,5",
@@ -460,7 +460,7 @@ namespace GStreamerDotNetTest
             //"image://C:/shared/file/1.jpg",
         };
         int dd = 0;
-        int cnt = 5;
+        int cnt = 2;
         int shiftnum = 0;
         private Timer _timer;
         bool isStart = false;
@@ -633,7 +633,7 @@ namespace GStreamerDotNetTest
 
             else
             {
-                SourceManagerWrapper.setInfo();
+                SourceManagerWrapper.setWarning();
 
                 for (int i = 0; i < cb.getCnt(); i++)
                 {
