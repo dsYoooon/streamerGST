@@ -263,11 +263,7 @@ bool SourceManager::AutoDetachConsumerBinInternal(GstElement* sinkBin) {
     
     
     GstPad* branch_sink = nullptr;
-    if ((branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_consumer")) ||
-        (branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_file_h264")) ||
-        (branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_file_image")) ||
-        (branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_capture_card")) ||
-        (branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_video_test"))) {
+    if ((branch_sink = (GstPad*)g_object_get_data(G_OBJECT(sinkBin), "sink_consumer")) ) {
         if (GstPad* peer = gst_pad_get_peer(branch_sink)) {
             gst_pad_unlink(peer, branch_sink);
             gst_object_unref(peer);

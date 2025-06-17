@@ -87,14 +87,15 @@ GstElement* SetDeco(int localIndex, const char* name) {
     if (!dec) {
         dec = gst_element_factory_make("d3d11h264dec", name);
     }
+    //dec = gst_element_factory_make("d3d12h264dec", name);
     //dec = gst_element_factory_make("nvh264dec", name);
-    dec = gst_element_factory_make("nvh264device1dec", name);
+    //dec = gst_element_factory_make("nvh264device1dec", name);
     //dec = gst_element_factory_make("d3d11h264dec", name);
     return dec;
 }
 static void set_queue_limits(GstElement* q) {
     g_object_set(q,
-        "max-size-buffers", 10,
+        "max-size-buffers", 15,
         "max-size-bytes", 0,
         "max-size-time", 0,
         "leaky", 2,
@@ -114,7 +115,7 @@ SharedSourcePipeline::SharedSourcePipeline(const std::string& rtspUrl)
         
         //g_slice_set_config(G_SLICE_CONFIG_ALWAYS_MALLOC, TRUE);
         gst_init(nullptr, nullptr);
-        gst_debug_set_threshold_for_name("QOS", GST_LEVEL_MEMDUMP);
+        gst_debug_set_threshold_for_name("CAPS ", GST_LEVEL_MEMDUMP);
 //        gst_debug_set_default_threshold(GST_LEVEL_INFO);
         GstRegistry* reg = gst_registry_get();
         gst_registry_scan_path(
@@ -173,18 +174,18 @@ static void ensure_dynamic_audio_chain(
     }
     //g_print("\n%s\n", flagKey.find("file"));
     
-    /*if (flagKey.find("file") != std::string::npos) {
+    if (flagKey.find("file") != std::string::npos) {
         g_object_set(queue,
-            "max-size-buffers", 0,
+            "max-size-buffers", 15,
             "max-size-bytes", 0,
-            "max-size-time", 2000 * GST_MSECOND,
-            "leaky", 2,
+            "max-size-time", 0,
+            //"leaky", 0,
             NULL);
     }
     else {
         set_queue_limits(queue);
-    }*/
-    set_queue_limits(queue);
+    }
+    //set_queue_limits(queue);
   
     //set_queue_limits(queue);
     if (use_jitter) {
@@ -356,54 +357,19 @@ static void on_pad_added_rtsp(GstElement* src, GstPad* new_pad, gpointer data) {
     gst_caps_unref(caps);
 }
 static void on_pad_added_video_file(GstElement* src, GstPad* pad, gpointer user_data) {
-    GstElement* pipeline = static_cast<GstElement*>(user_data);
-
-    GstElement* qv = gst_bin_get_by_name(GST_BIN(pipeline), "video_queue_file");
-    GstElement* parse = gst_bin_get_by_name(GST_BIN(pipeline), "h264_parse");
-
-    if (!qv || !parse) {
-        g_printerr("Failed to find elements for pad linking.\n");
-        return;
+    GstPipeline* pipe = GST_PIPELINE(user_data);
+    GstCaps* caps = gst_pad_query_caps(pad, nullptr);
+    const gchar* name = gst_structure_get_name(gst_caps_get_structure(caps, 0));
+    gst_caps_unref(caps);
+    if (g_str_has_prefix(name, "video/")) {
+        GstPad* sink = gst_element_get_static_pad(
+            gst_bin_get_by_name(GST_BIN(pipe), "video_queue_file"), "sink");
+        gst_pad_link(pad, sink);
+        gst_object_unref(sink);
     }
-
-    GstPad* sinkpad = gst_element_get_static_pad(qv, "sink");
-    if (gst_pad_is_linked(sinkpad)) {
-        g_print("Pad already linked, skipping.\n");
-        gst_object_unref(sinkpad);
-        gst_object_unref(qv);
-        gst_object_unref(parse);
-        return;
+    else if (g_str_has_prefix(name, "audio/")) {
+        ensure_dynamic_audio_chain(pipe, pad, "file", false);
     }
-
-    if (gst_pad_link(pad, sinkpad) != GST_PAD_LINK_OK) {
-        g_printerr("Failed to link qtdemux pad to queue.\n");
-    }
-    else {
-        g_print("Linked qtdemux pad to video queue.\n");
-
-        // queue → parse → dec → conv
-        if (!gst_element_link_many(qv, parse, NULL)) {
-            g_printerr("Failed to link queue → parse.\n");
-        }
-        else {
-            GstElement* dec = gst_bin_get_by_name(GST_BIN(pipeline), "h264_decode");
-            GstElement* conv = gst_bin_get_by_name(GST_BIN(pipeline), "convert");
-
-            if (!gst_element_link_many(parse, dec, conv, NULL)) {
-                g_printerr("Failed to link parse → dec → convert.\n");
-            }
-            else {
-                g_print("Linked video decode branch successfully.\n");
-            }
-
-            gst_object_unref(dec);
-            gst_object_unref(conv);
-        }
-    }
-
-    gst_object_unref(sinkpad);
-    gst_object_unref(qv);
-    gst_object_unref(parse);
 }
 
 SharedSourcePipeline::~SharedSourcePipeline() {
@@ -558,7 +524,12 @@ bool SharedSourcePipeline::Init() {
 
     if (isVideo) {
         GstElement* que = gst_element_factory_make("queue", "sync_q");
-        //set_queue_limits(que);
+        g_object_set(que,
+            "max-size-buffers", 3,
+            "max-size-bytes", 0,
+            "max-size-time", 0,
+            
+            NULL);
         //g_object_set(sync_identity, "sync", TRUE, NULL);
         gst_bin_add_many(GST_BIN(pipeline_), tee_, que, fakesink, NULL);
         g_object_set(fakesink, "sync", TRUE, NULL);
@@ -915,16 +886,18 @@ bool SharedSourcePipeline::CreateVideoBranch(GstElement** branchOut) {
 
     GstElement* qv_f = gst_element_factory_make("queue", "video_queue_file");
     GstElement* parse = gst_element_factory_make("h264parse", "h264_parse");
-    GstElement* dec = gst_element_factory_make("nvh264dec", "h264_decode");
-    GstElement* conv = gst_element_factory_make("videoconvert", "convert");
+    GstElement* dec = SetDeco(idxCounter.fetch_add(1), "dec");
+    GstElement* up = gst_element_factory_make("d3d11upload", "convert");
+
     g_object_set(qv_f,
-        "max-size-buffers", 20,
+        "max-size-buffers", 30,
         "max-size-bytes", 0,
         "max-size-time", 0,
-        "leaky", 2,
+        //"leaky", 2,
         NULL);
 
-    gst_bin_add_many(GST_BIN(pipeline_), source, demux, qv_f, parse, dec, conv, NULL);
+
+    gst_bin_add_many(GST_BIN(pipeline_), source, demux, qv_f, parse, dec, up,  NULL);
 
     if (!gst_element_link(source, demux)) {
         g_printerr("Failed to link filesrc -> demux for video.\n");
@@ -934,9 +907,12 @@ bool SharedSourcePipeline::CreateVideoBranch(GstElement** branchOut) {
 
 
     g_signal_connect(demux, "pad-added", G_CALLBACK(on_pad_added_video_file), pipeline_);
-
+    if (!gst_element_link_many(qv_f, parse, dec, up, NULL)) {
+        g_printerr("Failed to link filesrc -> demux for video.\n");
+        return false;
+    }
     // branch output은 identity (tee 연결은 여기서 나가야 함)
-    *branchOut = conv;
+    *branchOut = up;
     return true;
 }
 

@@ -50,9 +50,9 @@ static std::atomic<int> consumerCounter{ 0 };
 // 전역 디코더 선택을 위한 index 변수 (전역 index 증가)
 static void set_queue_limits(GstElement* q) {
     g_object_set(q,
-        "max-size-buffers", 10,
+        "max-size-buffers", 0,
         "max-size-bytes", 0,
-        "max-size-time", 0,
+        "max-size-time", 500 * GST_MSECOND,
         "leaky", 2, 
         NULL);
 }
@@ -127,6 +127,7 @@ bool ConsumerBin::Init() {
     GstElement* que = gst_element_factory_make("queue", "video_q_rtsp");
     GstElement* overlay = gst_element_factory_make("textoverlay", "overlay");
     GstElement* sink = gst_element_factory_make("d3d11videosink", "d3d11videosink");
+    set_queue_limits(que);
     //GstElement* fsink = gst_element_factory_make("fpsdisplaysink", "fps");
     if (!que || !sink 
         //|| !fsink
@@ -138,12 +139,12 @@ bool ConsumerBin::Init() {
     g_object_set(G_OBJECT(sink),
         "enable-last-sample", false,
         //"force-aspect-ratio", false,
-        "sync", TRUE,
-        
+        "sync", true,
+        "max-lateness",0,
         NULL);
 
     gst_bin_add_many(GST_BIN(consumerBin_), que, overlay, sink, NULL);
-    if (gst_element_link_many(que, overlay,sink,NULL)) {
+    if (gst_element_link_many(que,overlay, sink,NULL)) {
 
     }
     GstPad* p = gst_element_get_static_pad(que, "sink");
