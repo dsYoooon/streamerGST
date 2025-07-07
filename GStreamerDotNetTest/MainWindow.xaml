@@ -11,12 +11,13 @@
 
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
             <TextBlock Text="RTSP URL:" VerticalAlignment="Center" Margin="5,0"/>
-            <TextBox x:Name="txtRtspUrl" Width="350" VerticalContentAlignment="Center" Text="rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov"/>
+            <TextBox x:Name="txtRtspUrl" Width="350" VerticalContentAlignment="Center" Text="rtsp://192.168.10.22:10554/screen1"/>
             <Button x:Name="btnPlay" Content="Play" Width="80" Margin="5,0" Click="btnPlay_Click"/>
             <Button x:Name="btnStop" Content="Stop" Width="80" Click="btnStop_Click"/>
         </StackPanel>
 
+        <Button Grid.Row="1"/>
         <Border x:Name="videoContainer" Grid.Row="1" Margin="5" BorderBrush="Black" BorderThickness="1" Background="Black"/>
-
+        
     </Grid>
 </Window>

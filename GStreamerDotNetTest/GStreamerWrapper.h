@@ -12,14 +12,13 @@ namespace GStreamerWrapper {
     {
     private:
         GstElement* pipeline;
-        //HWND videoHwnd; // 창 핸들(HWND)을 직접 저장
+        HWND videoHwnd; // 창 핸들(HWND)을 직접 저장
 
         // C#에서 호출할 수 없도록 private으로 선언
         static void BusMessageCallback(GstBus* bus, GstMessage* msg, gpointer data);
         void HandleBusMessage(GstMessage* msg);
 
     public:
-        HWND videoHwnd;
         // 생성자가 Control 대신 IntPtr을 받도록 수정
         GstPlayer(IntPtr windowHandle);
         // 소멸자 (IDisposable 패턴을 위해 필요)
