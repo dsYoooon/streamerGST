@@ -26,6 +26,12 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="GStreamerWrapper.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="GStreamerWrapper.cpp" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <ProjectGuid>{23A886BB-2116-481A-B264-FD878C21FCA0}</ProjectGuid>
@@ -176,20 +182,6 @@
       <AdditionalLibraryDirectories>C:\gstreamer\1.0\msvc_x86_64\lib</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClInclude Include="ConsumerBin.h" />
-    <ClInclude Include="ConsumerBinWrapper.h" />
-    <ClInclude Include="GStreamerWrapper.h" />
-    <ClInclude Include="SharedSourcePipeline.h" />
-    <ClInclude Include="SourceManager.h" />
-    <ClInclude Include="SourceManagerWrapper.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="ConsumerBin.cpp" />
-    <ClCompile Include="SharedSourcePipeline.cpp" />
-    <ClCompile Include="SourceManager.cpp" />
-    <ClCompile Include="wrappercli.cpp" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

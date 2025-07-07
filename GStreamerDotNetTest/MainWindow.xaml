@@ -3,29 +3,19 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="MainWindow" Height="450" Width="800">
     <Grid>
-        <Button Content="Start Stream" HorizontalAlignment="Left" VerticalAlignment="Top" Width="100" Height="30" Click="StartButton_Click"/>
-        <Button Content="Stop Stream" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,40,0,0" Width="100" Height="30" Click="StopButton_Click"/>
-        <Button Content="Custom Stream" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,80,0,0" Width="100" Height="30" Click="CustomStreamButton_Click"/>
-        <Button Content="Check Stream" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,120,0,0" Width="100" Height="30" Click="Button_Click"/>
-        <Button Content="Move Window" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,160,0,0" Width="100" Height="30" Click="MoveButton_Click"/>
-        <Label Content="RTSP URL:" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="120,80,0,0"/>
-        <TextBox x:Name="UrlInput" Width="200" Height="25" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="200,80,0,0"/>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
 
-        <Label Content="X:" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="120,120,0,0"/>
-        <TextBox x:Name="XInput" Width="50" Height="25" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="150,120,0,0"/>
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
+            <TextBlock Text="RTSP URL:" VerticalAlignment="Center" Margin="5,0"/>
+            <TextBox x:Name="txtRtspUrl" Width="350" VerticalContentAlignment="Center" Text="rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov"/>
+            <Button x:Name="btnPlay" Content="Play" Width="80" Margin="5,0" Click="btnPlay_Click"/>
+            <Button x:Name="btnStop" Content="Stop" Width="80" Click="btnStop_Click"/>
+        </StackPanel>
 
-        <Label Content="Y:" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="210,120,0,0"/>
-        <TextBox x:Name="YInput" Width="50" Height="25" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="240,120,0,0"/>
+        <Border x:Name="videoContainer" Grid.Row="1" Margin="5" BorderBrush="Black" BorderThickness="1" Background="Black"/>
 
-        <Label Content="Width:" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="300,120,0,0"/>
-        <TextBox x:Name="WidthInput" Width="50" Height="25" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="350,120,0,0"/>
-
-        <Label Content="Height:" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="410,120,0,0"/>
-        <TextBox x:Name="HeightInput" Width="50" Height="25" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="470,120,0,0"/>
-        <TextBox x:Name="IdxInput" Width="50" Height="25" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="153,0,0,0"/>
-        <Label Content="idx:" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="120,0,0,0"/>
-        <Button Content="Null" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,200,0,0" Width="100" Height="30" Click="Button_Null_Click"/>
-        <Button Content="Ready" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,235,0,0" Width="100" Height="30" Click="Button_Ready_Click"/>
-        <Button Content="Play" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,270,0,0" Width="100" Height="30" Click="Button_Play_Click"/>
     </Grid>
 </Window>
