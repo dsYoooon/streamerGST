@@ -138,6 +138,9 @@ namespace GStreamerWrapper {
         // 5. rtspsrc의 pad-added 시그널에 콜백 연결
         g_signal_connect(source, "pad-added", G_CALLBACK(OnPadAdded), depay);
 
+        //렌더링시 원본비율 유지 true, 무시 false
+        g_object_set(sink, "force-aspect-ratio", false, NULL);
+        
         // 6. 버스 핸들러 설정
         GstBus* bus = gst_element_get_bus(pipeline);
         gst_bus_set_sync_handler(bus, (GstBusSyncHandler)BusSyncHandler, (gpointer)GCHandle::ToIntPtr(gch).ToPointer(), NULL);
