@@ -58,7 +58,7 @@ namespace GStreamerDotNetTest
             {
                 if (_player != null && !string.IsNullOrWhiteSpace(txtRtspUrl.Text))
                 {
-                    _player.Play(txtRtspUrl.Text);
+                    _player.Play(txtRtspUrl.Text); 
                 }
             }
 

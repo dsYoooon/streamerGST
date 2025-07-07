@@ -45,7 +45,7 @@ namespace GStreamerWrapper {
 
         // 이제 GCHandle이 정상적으로 인식됩니다.
         GCHandle gch = GCHandle::Alloc(this);
-
+        
         char* nativeUrl = (char*)Marshal::StringToHGlobalAnsi(rtspUrl).ToPointer();
         gchar* pipeline_str = g_strdup_printf("playbin uri=%s", nativeUrl);
         pipeline = gst_parse_launch(pipeline_str, NULL);
