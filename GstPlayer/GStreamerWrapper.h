@@ -29,7 +29,10 @@ namespace GStreamerWrapper {
         !GstPlayer();
 
         void StartScreenCapture(int monitorIndex);
-        void StartScreenCaptureServer();
+        // Starts the RTSP server. The IP address to bind to is provided by
+        // the managed layer so that the server can be configured at
+        // runtime instead of relying on a compile-time macro.
+        void StartScreenCaptureServer(String^ serverIp);
         void Stop();
 
         static void Initialize();

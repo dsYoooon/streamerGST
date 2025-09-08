@@ -48,18 +48,11 @@
                                 <ColumnDefinition Width="6*"/>
                             </Grid.ColumnDefinitions>
                             <Label Content="Num of stream:" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="5"/>
-                            <TextBox Name="Textbox_numofstreamer" Grid.Column="1" />
+                            <TextBox Name="Textbox_numofstreamer" Grid.Column="1" TextChanged="Textbox_numofstreamer_TextChanged" />
                         </Grid>
                     </StackPanel>
-                    <TabControl Grid.Row="1">
-                        <TabItem Header="stream1">
-                            <Grid Background="#FFE5E5E5"/>
-                        </TabItem>
-                        <TabItem Header="stream2">
-                            <Grid Background="#FFE5E5E5"/>
-                        </TabItem>
-                    </TabControl>
-                    <Button Grid.Row="1" Content="save setting" HorizontalAlignment="Left" Margin="10,10,0,10" VerticalAlignment="Center" Width="75"/>
+                    <TabControl Grid.Row="1" x:Name="StreamSettingsTab"/>
+                    <Button Grid.Row="2" Content="save setting" HorizontalAlignment="Left" Margin="10,10,0,10" VerticalAlignment="Center" Width="75" Click="BtnSaveSetting_Click"/>
                 </Grid>
             </TabItem>
           
