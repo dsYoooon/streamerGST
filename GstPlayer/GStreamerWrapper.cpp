@@ -91,13 +91,16 @@ namespace GStreamerWrapper {
 
         gst_element_set_state(pipeline, GST_STATE_PLAYING);
     }
-    void GstPlayer::StartScreenCaptureServer()
+    void GstPlayer::StartScreenCaptureServer(String^ serverIp)
     {
         // 기존 파이프라인 정지 후 새로운 RTSP 서버 실행. RTSP 서버는
         // 내부적으로 별도의 스레드에서 실행되므로 이 호출은 UI 스레드
         // 를 블로킹하지 않습니다.
         Stop();
-        RunScreenCaptureRtspServer();
+
+        IntPtr ipPtr = Marshal::StringToHGlobalAnsi(serverIp);
+        RunScreenCaptureRtspServer(static_cast<const char*>(ipPtr.ToPointer()));
+        Marshal::FreeHGlobal(ipPtr);
     }
 
     void GstPlayer::Stop()

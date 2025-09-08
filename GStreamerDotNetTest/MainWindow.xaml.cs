@@ -28,6 +28,19 @@ namespace GStreamerDotNetTest
             private GstPlayer _player;
             private GstVideoHost _videoHost;
 
+            private class StreamSetting
+            {
+                public ComboBox Monitor;
+                public TextBox CropX, CropY, CropW, CropH;
+                public ComboBox Resolution;
+                public TextBox FrameRate, Bitrate, Keyframe;
+                public ComboBox BitrateControl;
+                public ComboBox Profile;
+                public TabItem Tab;
+            }
+
+            private readonly List<StreamSetting> _streamSettings = new List<StreamSetting>();
+
             public MainWindow()
             {
                 InitializeComponent();
@@ -57,7 +70,8 @@ namespace GStreamerDotNetTest
 
             private void btnPlay_Click(object sender, RoutedEventArgs e)
             {
-                _player?.StartScreenCaptureServer();
+                string serverIp = Textbox_serverIP.Text;
+                _player?.StartScreenCaptureServer(serverIp);
             }
 
             private void btnStop_Click(object sender, RoutedEventArgs e)
@@ -87,6 +101,92 @@ namespace GStreamerDotNetTest
                 }
                 _player?.StartScreenCapture(monitorIndex);
             }
+        }
+
+        private void Textbox_numofstreamer_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (int.TryParse(Textbox_numofstreamer.Text, out int count) && count >= 0)
+            {
+                UpdateStreamTabs(count);
+            }
+        }
+
+        private void UpdateStreamTabs(int count)
+        {
+            StreamSettingsTab.Items.Clear();
+            _streamSettings.Clear();
+            for (int i = 0; i < count; i++)
+            {
+                var setting = CreateStreamSettingTab(i);
+                _streamSettings.Add(setting);
+                StreamSettingsTab.Items.Add(setting.Tab);
+            }
+        }
+
+        private StreamSetting CreateStreamSettingTab(int index)
+        {
+            var setting = new StreamSetting();
+            var tab = new TabItem { Header = $"stream{index + 1}" };
+            var root = new StackPanel { Margin = new Thickness(10) };
+
+            setting.Monitor = new ComboBox();
+            for (int i = 0; i < 4; i++) setting.Monitor.Items.Add(i.ToString());
+            root.Children.Add(LabeledControl("Monitor Index:", setting.Monitor));
+
+            setting.CropX = new TextBox { Width = 40 };
+            setting.CropY = new TextBox { Width = 40 };
+            setting.CropW = new TextBox { Width = 40 };
+            setting.CropH = new TextBox { Width = 40 };
+            var cropPanel = new StackPanel { Orientation = Orientation.Horizontal };
+            cropPanel.Children.Add(new Label { Content = "X" }); cropPanel.Children.Add(setting.CropX);
+            cropPanel.Children.Add(new Label { Content = "Y" }); cropPanel.Children.Add(setting.CropY);
+            cropPanel.Children.Add(new Label { Content = "W" }); cropPanel.Children.Add(setting.CropW);
+            cropPanel.Children.Add(new Label { Content = "H" }); cropPanel.Children.Add(setting.CropH);
+            root.Children.Add(LabeledControl("Crop:", cropPanel));
+
+            setting.Resolution = new ComboBox();
+            setting.Resolution.Items.Add("Input");
+            setting.Resolution.Items.Add("1080p");
+            setting.Resolution.Items.Add("720p");
+            root.Children.Add(LabeledControl("Resolution:", setting.Resolution));
+
+            setting.FrameRate = new TextBox { Width = 60 };
+            root.Children.Add(LabeledControl("Frame rate:", setting.FrameRate));
+
+            setting.Bitrate = new TextBox { Width = 60 };
+            root.Children.Add(LabeledControl("Bitrate:", setting.Bitrate));
+
+            setting.BitrateControl = new ComboBox();
+            setting.BitrateControl.Items.Add("CBR");
+            setting.BitrateControl.Items.Add("VBR");
+            root.Children.Add(LabeledControl("Bitrate Control:", setting.BitrateControl));
+
+            setting.Keyframe = new TextBox { Width = 60 };
+            root.Children.Add(LabeledControl("Keyframe Interval:", setting.Keyframe));
+
+            setting.Profile = new ComboBox();
+            setting.Profile.Items.Add("main");
+            setting.Profile.Items.Add("baseline");
+            setting.Profile.Items.Add("high");
+            root.Children.Add(LabeledControl("Profile:", setting.Profile));
+
+            tab.Content = root;
+            setting.Tab = tab;
+            return setting;
+        }
+
+        private FrameworkElement LabeledControl(string label, Control control)
+        {
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            panel.Children.Add(new Label { Content = label, Width = 120 });
+            panel.Children.Add(control);
+            return panel;
+        }
+
+        private void BtnSaveSetting_Click(object sender, RoutedEventArgs e)
+        {
+            string serverIp = Textbox_serverIP.Text;
+            _player?.StartScreenCaptureServer(serverIp);
         }
     }
 }

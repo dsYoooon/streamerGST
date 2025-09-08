@@ -11,9 +11,13 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#define SIP "192.168.10.252"
-
 namespace GStreamerWrapper {
+
+// Server IP address supplied from the .NET layer. Previously this value
+// was specified via the `SIP` macro making it impossible to configure at
+// run time.  It is now stored in a global that is set when the server is
+// started.
+static std::string g_server_ip;
 
 // ===== 모니터 개수 탐지 =====
 static BOOL CALLBACK CountMonitorsProc(HMONITOR, HDC, LPRECT, LPARAM lParam) {
@@ -347,7 +351,7 @@ static GstRTSPMediaFactory* create_factory_for_monitor(int monitor_index) {
     g_signal_connect(f, "media-configure", G_CALLBACK(on_media_configure), NULL);
 
     gst_rtsp_media_factory_set_protocols(GST_RTSP_MEDIA_FACTORY(f), GST_RTSP_LOWER_TRANS_UDP_MCAST);
-    gst_rtsp_media_factory_set_multicast_iface(GST_RTSP_MEDIA_FACTORY(f), SIP);
+    gst_rtsp_media_factory_set_multicast_iface(GST_RTSP_MEDIA_FACTORY(f), g_server_ip.c_str());
 
     const int base_octet = 11 + monitor_index;
     const int base_port = 15000 + monitor_index * 20;
@@ -382,7 +386,7 @@ static void initialize_gstreamer(int* argc, char*** argv, RtspServerContext * ct
     gst_init(argc, argv);
     ctx->loop = g_main_loop_new(NULL, FALSE);
     ctx->server = gst_rtsp_server_new();
-    gst_rtsp_server_set_address(ctx->server, SIP);
+    gst_rtsp_server_set_address(ctx->server, g_server_ip.c_str());
     gst_rtsp_server_set_service(ctx->server, "10554");
 
     g_object_set(G_OBJECT(ctx->server), "session-timeout", 2, NULL);
@@ -408,7 +412,7 @@ static void configure_rtsp_server(RtspServerContext * ctx) {
         ctx->factories.push_back(f);
         std::ostringstream mount; mount << "/screen" << (i + 1);
         gst_rtsp_mount_points_add_factory(ctx->mounts, mount.str().c_str(), f);
-        g_print("  - mount: rtsp://192.168.10.252:10554%s\n", mount.str().c_str());
+        g_print("  - mount: rtsp://%s:10554%s\n", g_server_ip.c_str(), mount.str().c_str());
     }
 }
 
@@ -418,7 +422,7 @@ static bool start_rtsp_server(RtspServerContext * ctx) {
         g_printerr("RTSP 서버 attach 실패\n");
         return false;
     }
-    g_print("RTSP 서버가 시작되었습니다. 예: rtsp://192.168.10.252:10554/screen1\n");
+    g_print("RTSP 서버가 시작되었습니다. 예: rtsp://%s:10554/screen1\n", g_server_ip.c_str());
     g_main_loop_run(ctx->loop);
     return true;
 }
@@ -440,8 +444,16 @@ static void cleanup_resources(RtspServerContext * ctx) {
     ctx->factories.clear();
 }
 
-// 서버를 백그라운드 스레드에서 실행하도록 수정
-void RunScreenCaptureRtspServer() {
+// 서버를 백그라운드 스레드에서 실행하도록 수정. `serverIp`는 서버가
+// 바인딩할 주소이며 전역 변수로 보관되어 이후 GStreamer 초기화 시
+// 사용된다.
+void RunScreenCaptureRtspServer(const char* serverIp) {
+    if (serverIp) {
+        g_server_ip = serverIp;
+    } else {
+        g_server_ip.clear();
+    }
+
     if (g_server_thread.joinable()) {
         g_printerr("RTSP server already running\n");
         return;
