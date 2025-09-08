@@ -38,6 +38,7 @@ namespace GStreamerWrapper {
 
     void GstPlayer::Deinitialize()
     {
+        StopScreenCaptureRtspServer();
         gst_deinit();
     }
 
