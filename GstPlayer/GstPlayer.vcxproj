@@ -28,9 +28,11 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GStreamerWrapper.h" />
+    <ClInclude Include="ScreenCaptureServer.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="GStreamerWrapper.cpp" />
+    <ClCompile Include="ScreenCaptureServer.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

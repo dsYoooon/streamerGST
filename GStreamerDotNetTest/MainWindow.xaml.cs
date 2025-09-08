@@ -75,7 +75,7 @@ namespace GStreamerDotNetTest
 
         private void btnMonitorPlay_Click(object sender, RoutedEventArgs e)
         {
-
+            _player?.StartScreenCaptureServer();
         }
     }
-    }
+}
