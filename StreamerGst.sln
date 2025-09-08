@@ -1,0 +1,67 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.12.35527.113
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "StreamerGstWrapper", "GstPlayer\GstPlayer.vcxproj", "{23A886BB-2116-481A-B264-FD878C21FCA0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StreamerDotNet", "GStreamerDotNetTest\StreamerDotNet.csproj", "{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+		remote|Any CPU = remote|Any CPU
+		remote|x64 = remote|x64
+		remote|x86 = remote|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Debug|Any CPU.Build.0 = Debug|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Debug|x64.ActiveCfg = Debug|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Debug|x64.Build.0 = Debug|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Debug|x86.ActiveCfg = Debug|Win32
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Debug|x86.Build.0 = Debug|Win32
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Release|Any CPU.ActiveCfg = Release|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Release|Any CPU.Build.0 = Release|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Release|x64.ActiveCfg = Debug|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Release|x64.Build.0 = Debug|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Release|x86.ActiveCfg = Release|Win32
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.Release|x86.Build.0 = Release|Win32
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.remote|Any CPU.ActiveCfg = remote|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.remote|Any CPU.Build.0 = remote|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.remote|x64.ActiveCfg = remote|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.remote|x64.Build.0 = remote|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.remote|x64.Deploy.0 = remote|x64
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.remote|x86.ActiveCfg = remote|Win32
+		{23A886BB-2116-481A-B264-FD878C21FCA0}.remote|x86.Build.0 = remote|Win32
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Debug|x64.ActiveCfg = Debug|x64
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Debug|x64.Build.0 = Debug|x64
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Debug|x86.Build.0 = Debug|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Release|x64.ActiveCfg = Debug|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Release|x64.Build.0 = Debug|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Release|x86.ActiveCfg = Release|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.Release|x86.Build.0 = Release|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.remote|Any CPU.ActiveCfg = remote|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.remote|Any CPU.Build.0 = remote|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.remote|x64.ActiveCfg = remote|x64
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.remote|x64.Build.0 = remote|x64
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.remote|x86.ActiveCfg = remote|Any CPU
+		{FB43E2B1-5AA0-47D7-B7C3-3AC2E211D429}.remote|x86.Build.0 = remote|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {F957042C-A6EE-4D77-BBAF-4CBA47C0F639}
+	EndGlobalSection
+EndGlobal

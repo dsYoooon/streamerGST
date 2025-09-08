@@ -56,10 +56,7 @@ namespace GStreamerDotNetTest
 
             private void btnPlay_Click(object sender, RoutedEventArgs e)
             {
-                if (_player != null && !string.IsNullOrWhiteSpace(txtRtspUrl.Text))
-                {
-                    _player.Play(txtRtspUrl.Text); 
-                }
+           
             }
 
             private void btnStop_Click(object sender, RoutedEventArgs e)
@@ -75,5 +72,10 @@ namespace GStreamerDotNetTest
 
                 GstPlayer.Deinitialize();
             }
+
+        private void btnMonitorPlay_Click(object sender, RoutedEventArgs e)
+        {
+
         }
+    }
     }
