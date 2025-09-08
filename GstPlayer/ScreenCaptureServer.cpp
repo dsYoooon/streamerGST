@@ -6,6 +6,7 @@
 #include <vector>
 #include <sstream>
 #include <iostream>
+#include <thread>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -30,6 +31,10 @@ struct RtspServerContext {
     GstRTSPMountPoints* mounts = nullptr;
     std::vector<GstRTSPMediaFactory*> factories; // 정리용 보관
 };
+
+// 전역 컨텍스트와 실행 스레드를 보관하여 비동기 실행 및 중지를 지원합니다.
+static RtspServerContext g_ctx;
+static std::thread g_server_thread;
 
 // 전방 선언
 static void SetOverlayText(RtspServerContext* ctx, int screen_index, const char* text);
@@ -415,16 +420,40 @@ static void cleanup_resources(RtspServerContext * ctx) {
     for (auto* f : ctx->factories) { if (f) g_object_unref(f); }
     if (ctx->server)  g_object_unref(ctx->server);
     if (ctx->loop)    g_main_loop_unref(ctx->loop);
+    // reset pointers to avoid double free on repeated start/stop
+    ctx->loop = nullptr;
+    ctx->server = nullptr;
+    ctx->mounts = nullptr;
+    ctx->factories.clear();
 }
 
+// 서버를 백그라운드 스레드에서 실행하도록 수정
 void RunScreenCaptureRtspServer() {
-    RtspServerContext ctx;
-    int argc = 0; char** argv = nullptr;
-    initialize_gstreamer(&argc, &argv, &ctx);
-    configure_rtsp_server(&ctx);
-    start_rtsp_server(&ctx);
-    cleanup_resources(&ctx);
-    g_print("서버 종료\n");
+    if (g_server_thread.joinable()) {
+        g_printerr("RTSP server already running\n");
+        return;
+    }
+    g_server_thread = std::thread([]() {
+        int argc = 0; char** argv = nullptr;
+        initialize_gstreamer(&argc, &argv, &g_ctx);
+        configure_rtsp_server(&g_ctx);
+        start_rtsp_server(&g_ctx); // 내부에서 g_main_loop_run 수행
+        cleanup_resources(&g_ctx);
+        g_print("서버 종료\n");
+    });
+}
+
+void StopScreenCaptureRtspServer() {
+    if (g_ctx.loop) {
+        g_main_loop_quit(g_ctx.loop);
+        GMainContext* ctx = g_main_loop_get_context(g_ctx.loop);
+        if (ctx) {
+            g_main_context_wakeup(ctx);
+        }
+    }
+    if (g_server_thread.joinable()) {
+        g_server_thread.join();
+    }
 }
 
 } // namespace GStreamerWrapper

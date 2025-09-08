@@ -38,6 +38,7 @@ namespace GStreamerWrapper {
 
     void GstPlayer::Deinitialize()
     {
+        StopScreenCaptureRtspServer();
         gst_deinit();
     }
 
@@ -92,7 +93,9 @@ namespace GStreamerWrapper {
     }
     void GstPlayer::StartScreenCaptureServer()
     {
-        // 기존 파이프라인 정지 후 새로운 RTSP 서버 실행
+        // 기존 파이프라인 정지 후 새로운 RTSP 서버 실행. RTSP 서버는
+        // 내부적으로 별도의 스레드에서 실행되므로 이 호출은 UI 스레드
+        // 를 블로킹하지 않습니다.
         Stop();
         RunScreenCaptureRtspServer();
     }
@@ -107,6 +110,8 @@ namespace GStreamerWrapper {
         if (gcHandle.IsAllocated) {
             gcHandle.Free();
         }
+        // RTSP 서버가 실행 중이면 중지합니다.
+        StopScreenCaptureRtspServer();
     }
 
     void GstPlayer::BusMessageCallback(GstBus* bus, GstMessage* msg, gpointer data)
