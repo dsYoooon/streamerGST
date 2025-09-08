@@ -29,6 +29,7 @@ struct RtspServerContext {
     GMainLoop* loop = nullptr;
     GstRTSPServer* server = nullptr;
     GstRTSPMountPoints* mounts = nullptr;
+    guint server_source_id = 0; // attach된 서버 소스 ID
     std::vector<GstRTSPMediaFactory*> factories; // 정리용 보관
 };
 
@@ -407,8 +408,11 @@ static void configure_rtsp_server(RtspServerContext * ctx) {
 }
 
 static bool start_rtsp_server(RtspServerContext * ctx) {
-    guint id = gst_rtsp_server_attach(ctx->server, NULL);
-    if (id == 0) { g_printerr("RTSP 서버 attach 실패\n"); return false; }
+    ctx->server_source_id = gst_rtsp_server_attach(ctx->server, NULL);
+    if (ctx->server_source_id == 0) {
+        g_printerr("RTSP 서버 attach 실패\n");
+        return false;
+    }
     g_print("RTSP 서버가 시작되었습니다. 예: rtsp://192.168.10.252:10554/screen1\n");
     g_main_loop_run(ctx->loop);
     return true;
@@ -416,6 +420,10 @@ static bool start_rtsp_server(RtspServerContext * ctx) {
 
 static void cleanup_resources(RtspServerContext * ctx) {
     g_print("5. 리소스 해제...\n");
+    if (ctx->server_source_id != 0) {
+        g_source_remove(ctx->server_source_id);
+        ctx->server_source_id = 0;
+    }
     if (ctx->mounts)  g_object_unref(ctx->mounts);
     for (auto* f : ctx->factories) { if (f) g_object_unref(f); }
     if (ctx->server)  g_object_unref(ctx->server);
