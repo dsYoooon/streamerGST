@@ -55,6 +55,41 @@ namespace GStreamerWrapper {
     {
         Stop();
     }
+    void GstPlayer::StartScreenCapture(int monitorIndex)
+    {
+        Stop();
+
+        pipeline = gst_pipeline_new("screen-preview");
+        GstElement* src = gst_element_factory_make("d3d11screencapturesrc", "src");
+        GstElement* conv = gst_element_factory_make("d3d11convert", "conv");
+        GstElement* sink = gst_element_factory_make("d3d11videosink", "sink");
+
+        if (!pipeline || !src || !conv || !sink) {
+            g_printerr("파이프라인 생성 실패\n");
+            if (pipeline) { gst_object_unref(pipeline); pipeline = nullptr; }
+            return;
+        }
+
+        g_object_set(src, "monitor-index", monitorIndex, "show-cursor", TRUE, NULL);
+
+        gst_bin_add_many(GST_BIN(pipeline), src, conv, sink, NULL);
+        if (!gst_element_link_many(src, conv, sink, NULL)) {
+            g_printerr("요소 연결 실패\n");
+            gst_object_unref(pipeline);
+            pipeline = nullptr;
+            return;
+        }
+
+        gcHandle = GCHandle::Alloc(this);
+
+        GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
+        gst_bus_add_signal_watch(bus);
+        g_signal_connect(bus, "message", G_CALLBACK(BusMessageCallback), GCHandle::ToIntPtr(gcHandle).ToPointer());
+        gst_bus_set_sync_handler(bus, BusSyncHandler, GCHandle::ToIntPtr(gcHandle).ToPointer(), NULL);
+        g_object_unref(bus);
+
+        gst_element_set_state(pipeline, GST_STATE_PLAYING);
+    }
     void GstPlayer::StartScreenCaptureServer()
     {
         // 기존 파이프라인 정지 후 새로운 RTSP 서버 실행
@@ -68,6 +103,9 @@ namespace GStreamerWrapper {
             gst_element_set_state(pipeline, GST_STATE_NULL);
             gst_object_unref(pipeline);
             pipeline = nullptr;
+        }
+        if (gcHandle.IsAllocated) {
+            gcHandle.Free();
         }
     }
 

@@ -15,6 +15,7 @@ using GStreamerWrapper; // C++/CLI 래퍼 네임스페이스
 using System.IO;
 using System.Security.Policy;
 using System.Text.RegularExpressions;
+using System.Windows.Controls;
 
 
 namespace GStreamerDotNetTest
@@ -56,7 +57,7 @@ namespace GStreamerDotNetTest
 
             private void btnPlay_Click(object sender, RoutedEventArgs e)
             {
-           
+                _player?.StartScreenCaptureServer();
             }
 
             private void btnStop_Click(object sender, RoutedEventArgs e)
@@ -75,7 +76,17 @@ namespace GStreamerDotNetTest
 
         private void btnMonitorPlay_Click(object sender, RoutedEventArgs e)
         {
-            _player?.StartScreenCaptureServer();
+            if (sender is Button btn)
+            {
+                var match = Regex.Match(btn.Name, @"M(\d+)Play", RegexOptions.IgnoreCase);
+                int monitorIndex = 0;
+                if (match.Success)
+                {
+                    int idx = int.Parse(match.Groups[1].Value);
+                    monitorIndex = Math.Max(0, idx - 1);
+                }
+                _player?.StartScreenCapture(monitorIndex);
+            }
         }
     }
 }
