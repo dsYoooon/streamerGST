@@ -60,6 +60,11 @@ static void client_connected_callback(GstRTSPServer*, GstRTSPClient* client, gpo
     g_signal_connect(client, "closed", G_CALLBACK(client_closed_callback), user_data);
 }
 
+static GstRTSPFilterResult force_client_disconnect(GstRTSPServer*, GstRTSPClient* client, gpointer) {
+    gst_rtsp_client_close(client);
+    return GST_RTSP_FILTER_REMOVE;
+}
+
 // ====== 커스텀 Factory ======
 typedef struct _MyMediaFactory {
     GstRTSPMediaFactory parent;
@@ -452,14 +457,20 @@ void RunScreenCaptureRtspServer() {
 }
 
 void StopScreenCaptureRtspServer() {
+    if (g_ctx.server) {
+        gst_rtsp_server_client_filter(g_ctx.server, force_client_disconnect, nullptr);
+        GstRTSPSessionPool* pool = gst_rtsp_server_get_session_pool(g_ctx.server);
+        if (pool) {
+            gst_rtsp_session_pool_cleanup(pool);
+            g_object_unref(pool);
+        }
+    }
     if (g_ctx.loop) {
         g_main_loop_quit(g_ctx.loop);
-
         GMainContext* ctx = g_main_loop_get_context(g_ctx.loop);
         if (ctx) {
             g_main_context_wakeup(ctx);
         }
-
     }
     if (g_server_thread.joinable()) {
         g_server_thread.join();
