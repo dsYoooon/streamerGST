@@ -446,10 +446,12 @@ void RunScreenCaptureRtspServer() {
 void StopScreenCaptureRtspServer() {
     if (g_ctx.loop) {
         g_main_loop_quit(g_ctx.loop);
+
         GMainContext* ctx = g_main_loop_get_context(g_ctx.loop);
         if (ctx) {
             g_main_context_wakeup(ctx);
         }
+
     }
     if (g_server_thread.joinable()) {
         g_server_thread.join();
