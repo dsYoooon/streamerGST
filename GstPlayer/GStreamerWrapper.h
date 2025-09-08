@@ -12,22 +12,22 @@ namespace GStreamerWrapper {
     {
     private:
         GstElement* pipeline;
-        //HWND videoHwnd; // Ã¢ ÇÚµé(HWND)À» Á÷Á¢ ÀúÀå
+        //HWND videoHwnd; // ì°½ í•¸ë“¤(HWND)ì„ ì§ì ‘ ì €ì¥
 
-        // C#¿¡¼­ È£ÃâÇÒ ¼ö ¾øµµ·Ï privateÀ¸·Î ¼±¾ğ
+        // C#ì—ì„œ í˜¸ì¶œí•  ìˆ˜ ì—†ë„ë¡ privateìœ¼ë¡œ ì„ ì–¸
         static void BusMessageCallback(GstBus* bus, GstMessage* msg, gpointer data);
         void HandleBusMessage(GstMessage* msg);
 
     public:
         HWND videoHwnd;
-        // »ı¼ºÀÚ°¡ Control ´ë½Å IntPtrÀ» ¹Şµµ·Ï ¼öÁ¤
+        // ìƒì„±ìê°€ Control ëŒ€ì‹  IntPtrì„ ë°›ë„ë¡ ìˆ˜ì •
         GstPlayer(IntPtr windowHandle);
-        // ¼Ò¸êÀÚ (IDisposable ÆĞÅÏÀ» À§ÇØ ÇÊ¿ä)
+        // ì†Œë©¸ì (IDisposable íŒ¨í„´ì„ ìœ„í•´ í•„ìš”)
         ~GstPlayer();
-        // C++ CLI¿¡¼­´Â !GstPlayer() ÇüÅÂÀÇ Finalizerµµ Á¤ÀÇÇØÁÖ´Â °ÍÀÌ ÁÁ½À´Ï´Ù.
+        // C++ CLIì—ì„œëŠ” !GstPlayer() í˜•íƒœì˜ Finalizerë„ ì •ì˜í•´ì£¼ëŠ” ê²ƒì´ ì¢‹ìŠµë‹ˆë‹¤.
         !GstPlayer();
 
-        void Play(String^ rtspUrl);
+        void StartScreenCaptureServer();
         void Stop();
 
         static void Initialize();
