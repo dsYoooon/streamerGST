@@ -5,6 +5,7 @@
 #include <vcclr.h>
 #include <Windows.h>
 using namespace System;
+using namespace System::Runtime::InteropServices; // for GCHandle
 
 namespace GStreamerWrapper {
 
@@ -12,7 +13,7 @@ namespace GStreamerWrapper {
     {
     private:
         GstElement* pipeline;
-        //HWND videoHwnd; // 창 핸들(HWND)을 직접 저장
+        GCHandle gcHandle;
 
         // C#에서 호출할 수 없도록 private으로 선언
         static void BusMessageCallback(GstBus* bus, GstMessage* msg, gpointer data);
@@ -27,6 +28,7 @@ namespace GStreamerWrapper {
         // C++ CLI에서는 !GstPlayer() 형태의 Finalizer도 정의해주는 것이 좋습니다.
         !GstPlayer();
 
+        void StartScreenCapture(int monitorIndex);
         void StartScreenCaptureServer();
         void Stop();
 
