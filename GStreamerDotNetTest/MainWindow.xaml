@@ -4,22 +4,67 @@
         Title="MainWindow" Height="450" Width="800"
         Loaded="MainWindow_Loaded" Closing="MainWindow_Closing">
     <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
+    <TabControl Grid.Row="1">
+        <TabItem Header="streameing">
+            <Grid Background="#FFE5E5E5">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
-            <Button x:Name="btnM1Play" Content="Monitor 1 Play" Width="90" Margin="5,0" Click="btnMonitorPlay_Click"/>
-            <Button x:Name="btnM2Play" Content="Monitor 2 Play" Width="90" Margin="5,0" Click="btnMonitorPlay_Click"/>
-            <Button x:Name="btnM3Play" Content="Monitor 3 Play" Width="90" Margin="5,0" Click="btnMonitorPlay_Click"/>
-            <Button x:Name="btnM4Play" Content="Monitor 4 Play" Width="90" Margin="5,0" Click="btnMonitorPlay_Click"/>
-            <Button x:Name="btnPlay" Content="Server Play" Width="80" Margin="5,0" Click="btnPlay_Click"/>
-            <Button x:Name="btnStop" Content="Server Stop" Width="80" Click="btnStop_Click"/>
-        </StackPanel>
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="5">
+                    <Button x:Name="btnM1Play" Content="Monitor 1 Play" Width="90" Margin="5,0" Click="btnMonitorPlay_Click"/>
+                    <Button x:Name="btnM2Play" Content="Monitor 2 Play" Width="90" Margin="5,0" Click="btnMonitorPlay_Click"/>
+                    <Button x:Name="btnM3Play" Content="Monitor 3 Play" Width="90" Margin="5,0" Click="btnMonitorPlay_Click"/>
+                    <Button x:Name="btnM4Play" Content="Monitor 4 Play" Width="90" Margin="5,0" Click="btnMonitorPlay_Click"/>
+                    <Button x:Name="btnPlay" Content="Server Play" Width="80" Margin="5,0" Click="btnPlay_Click"/>
+                    <Button x:Name="btnStop" Content="Server Stop" Width="80" Click="btnStop_Click"/>
+                </StackPanel>
 
-        <!--<Button Grid.Row="1"/>-->
-        <Border x:Name="videoContainer" Grid.Row="1" Margin="5" BorderBrush="Black" BorderThickness="1" Background="Black" HorizontalAlignment="Stretch"/>
-        
+                <!--<Button Grid.Row="1"/>-->
+                <Border x:Name="videoContainer" Grid.Row="1" Margin="5" BorderBrush="Black" BorderThickness="1" Background="Black" HorizontalAlignment="Stretch"/>
+            </Grid>
+
+        </TabItem>
+        <TabItem Header="settings">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="auto"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="6*"/>
+                            </Grid.ColumnDefinitions>
+                            <Label Content="Server IP:" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="5"/>
+                            <TextBox Name="Textbox_serverIP" Grid.Column="1" />
+                        </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="6*"/>
+                            </Grid.ColumnDefinitions>
+                            <Label Content="Num of stream:" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="5"/>
+                            <TextBox Name="Textbox_numofstreamer" Grid.Column="1" />
+                        </Grid>
+                    </StackPanel>
+                    <TabControl Grid.Row="1">
+                        <TabItem Header="stream1">
+                            <Grid Background="#FFE5E5E5"/>
+                        </TabItem>
+                        <TabItem Header="stream2">
+                            <Grid Background="#FFE5E5E5"/>
+                        </TabItem>
+                    </TabControl>
+                    <Button Grid.Row="1" Content="save setting" HorizontalAlignment="Left" Margin="10,10,0,10" VerticalAlignment="Center" Width="75"/>
+                </Grid>
+            </TabItem>
+          
+        </TabControl>
+    
+       
     </Grid>
 </Window>
