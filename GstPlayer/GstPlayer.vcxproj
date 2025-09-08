@@ -131,7 +131,7 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);gstreamer-1.0.lib;gstbase-1.0.lib;gstvideo-1.0.lib;gobject-2.0.lib;glib-2.0.lib;Shcore.lib;gstpbutils-1.0.lib;gstapp-1.0.lib</AdditionalDependencies>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);gstreamer-1.0.lib;gstbase-1.0.lib;gstvideo-1.0.lib;gobject-2.0.lib;glib-2.0.lib;Shcore.lib;gstpbutils-1.0.lib;gstapp-1.0.lib;gstrtspserver-1.0.lib;gstrtsp-1.0.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>C:\gstreamer\1.0\msvc_x86_64\lib</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
