@@ -175,7 +175,7 @@ namespace GStreamerDotNetTest
             return setting;
         }
 
-        private FrameworkElement LabeledControl(string label, Control control)
+        private FrameworkElement LabeledControl(string label, UIElement control)
         {
             var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
             panel.Children.Add(new Label { Content = label, Width = 120 });

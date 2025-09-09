@@ -30,25 +30,25 @@
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
-                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="5*"/>
                         <RowDefinition Height="auto"/>
                     </Grid.RowDefinitions>
                     <StackPanel>
-                        <Grid>
+                        <Grid Height="30" >
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="6*"/>
                             </Grid.ColumnDefinitions>
-                            <Label Content="Server IP:" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="5"/>
+                            <Label Content="Server IP:" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="2"/>
                             <TextBox Name="Textbox_serverIP" Grid.Column="1" />
                         </Grid>
-                        <Grid>
+                        <Grid Height="30" >
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="6*"/>
                             </Grid.ColumnDefinitions>
-                            <Label Content="Num of stream:" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="5"/>
-                            <TextBox Name="Textbox_numofstreamer" Grid.Column="1" TextChanged="Textbox_numofstreamer_TextChanged" />
+                            <Label Content="Num of stream:" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="2"/>
+                            <TextBox Name="Textbox_numofstreamer" Grid.Column="1" TextChanged="Textbox_numofstreamer_TextChanged" Height="30" />
                         </Grid>
                     </StackPanel>
                     <TabControl Grid.Row="1" x:Name="StreamSettingsTab"/>
