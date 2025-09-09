@@ -8,6 +8,8 @@
 #include <iostream>
 #include <thread>
 
+#include "ScreenCaptureServer.h"
+
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
@@ -18,21 +20,22 @@ namespace GStreamerWrapper {
 // run time.  It is now stored in a global that is set when the server is
 // started.
 static std::string g_server_ip;
+static std::vector<StreamConfigNative> g_configs;
 
 // ===== 모니터 개수 탐지 =====
 static BOOL CALLBACK CountMonitorsProc(HMONITOR, HDC, LPRECT, LPARAM lParam) {
     int* c = reinterpret_cast<int*>(lParam); (*c)++; return TRUE;
 }
 static int DetectMonitorCount() {
-    int c = 0; EnumDisplayMonitors(nullptr, nullptr, CountMonitorsProc, reinterpret_cast<LPARAM>(&c));
+    int c = 0; EnumDisplayMonitors(NULL, NULL, CountMonitorsProc, reinterpret_cast<LPARAM>(&c));
     return c > 0 ? c : 1;
 }
 
 // ===== RTSP 컨텍스트 =====
 struct RtspServerContext {
-    GMainLoop* loop = nullptr;
-    GstRTSPServer* server = nullptr;
-    GstRTSPMountPoints* mounts = nullptr;
+    GMainLoop* loop = NULL;
+    GstRTSPServer* server = NULL;
+    GstRTSPMountPoints* mounts = NULL;
     guint server_source_id = 0; // attach된 서버 소스 ID
     std::vector<GstRTSPMediaFactory*> factories; // 정리용 보관
 };
@@ -93,7 +96,7 @@ typedef struct _MyMediaFactoryClass {
 G_DEFINE_TYPE(MyMediaFactory, my_media_factory, GST_TYPE_RTSP_MEDIA_FACTORY)
 
 static GstCaps* caps_from(const std::string& s) { return gst_caps_from_string(s.c_str()); }
-static gboolean link_ok(GstElement* a, GstElement* b, GstCaps* caps = nullptr) {
+static gboolean link_ok(GstElement* a, GstElement* b, GstCaps* caps = NULL) {
     gboolean ok = caps ? gst_element_link_filtered(a, b, caps) : gst_element_link(a, b);
     if (!ok) g_printerr("link failed between %s -> %s\n", GST_ELEMENT_NAME(a), GST_ELEMENT_NAME(b));
     if (caps) gst_caps_unref(caps);
@@ -110,8 +113,8 @@ static void on_media_prepared(GstRTSPMedia*, gpointer) {
     g_print("[media] prepared\n");
 }
 static void on_media_configure(GstRTSPMediaFactory*, GstRTSPMedia* media, gpointer) {
-    g_signal_connect(media, "prepared", G_CALLBACK(on_media_prepared), nullptr);
-    g_signal_connect(media, "unprepared", G_CALLBACK(on_media_unprepared), nullptr);
+    g_signal_connect(media, "prepared", G_CALLBACK(on_media_prepared), NULL);
+    g_signal_connect(media, "unprepared", G_CALLBACK(on_media_unprepared), NULL);
 }
 
 static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory, const GstRTSPUrl*) {
@@ -124,10 +127,10 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
     const gint v_kbps = self->v_bitrate_kbps;
     const gint a_bps = self->a_bitrate_bps;
 
-    GstElement* bin = gst_bin_new(nullptr);
+    GstElement* bin = gst_bin_new(NULL);
 
     // ---- 비디오 ----
-    GstElement* vsrc = gst_element_factory_make("d3d11screencapturesrc", nullptr);
+    GstElement* vsrc = gst_element_factory_make("d3d11screencapturesrc", NULL);
     GstElement* vd3d = gst_element_factory_make("d3d11convert", "vd3d11conv");
     GstElement* vdown = gst_element_factory_make("d3d11download", "vdown");     // GPU->CPU
     GstElement* vconv = gst_element_factory_make("videoconvert", "vconv");      // CPU colorspace
@@ -151,13 +154,13 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
 #endif
         g_printerr("비디오 요소 생성 실패\n");
         if (bin) gst_object_unref(bin);
-        return nullptr;
+        return NULL;
     }
 
 #ifndef TextOveray
-    gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, nullptr);
+    gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
 #else
-    gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vdown, vconv, tover, vconv2, vq1, venc, vparse, vcf, vq2, vpay, nullptr);
+    gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vdown, vconv, tover, vconv2, vq1, venc, vparse, vcf, vq2, vpay, NULL);
 #endif
 
     g_object_set(vsrc, "monitor-index", monitor_index, "show-cursor", TRUE, NULL);
@@ -260,10 +263,10 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
     if (self->enable_audio) {
         GstElement* asrc = gst_element_factory_make("wasapisrc", "asrc");
         GstElement* aq1 = gst_element_factory_make("queue", "aqueue1");
-        GstElement* aconv = gst_element_factory_make("audioconvert", nullptr);
-        GstElement* ares = gst_element_factory_make("audioresample", nullptr);
+        GstElement* aconv = gst_element_factory_make("audioconvert", NULL);
+        GstElement* ares = gst_element_factory_make("audioresample", NULL);
         GstElement* acapsf = gst_element_factory_make("capsfilter", "acaps");
-        GstElement* arate = gst_element_factory_make("audiorate", nullptr);
+        GstElement* arate = gst_element_factory_make("audiorate", NULL);
         GstElement* aq2 = gst_element_factory_make("queue", "aqueue2");
         GstElement* aenc = gst_element_factory_make("opusenc", "aenc");
         GstElement* apay = gst_element_factory_make("rtpopuspay", "pay1");
@@ -272,7 +275,7 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
             g_warning("오디오 요소 생성 실패, 비디오만 스트리밍합니다.");
         }
         else {
-            gst_bin_add_many(GST_BIN(bin), asrc, aq1, aconv, ares, acapsf, arate, aq2, aenc, apay, nullptr);
+            gst_bin_add_many(GST_BIN(bin), asrc, aq1, aconv, ares, acapsf, arate, aq2, aenc, apay, NULL);
 
             g_object_set(asrc, "loopback", TRUE, "do-timestamp", TRUE, NULL);
             g_object_set(aq1, "leaky", 2, "max-size-buffers", 2, "max-size-bytes", 0, "max-size-time", (gint64)200000000, NULL);
@@ -304,11 +307,11 @@ static void my_media_factory_finalize(GObject * object) {
 #ifdef TextOveray
     if (self->overlay_elem) {
         g_object_remove_weak_pointer(G_OBJECT(self->overlay_elem), (gpointer*)&self->overlay_elem);
-        self->overlay_elem = nullptr;
+        self->overlay_elem = NULL;
     }
     if (self->overlay_text) {
         g_free(self->overlay_text);
-        self->overlay_text = nullptr;
+        self->overlay_text = NULL;
     }
 #endif
     G_OBJECT_CLASS(my_media_factory_parent_class)->finalize(object);
@@ -324,25 +327,25 @@ static void my_media_factory_class_init(MyMediaFactoryClass * klass) {
 static void my_media_factory_init(MyMediaFactory * self) {
 #ifdef TextOveray
     self->overlay_text = g_strdup("");
-    self->overlay_elem = nullptr;
+    self->overlay_elem = NULL;
 #endif
 }
 
-static GstRTSPMediaFactory* create_factory_for_monitor(int monitor_index) {
+static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative& cfg) {
     const bool ENABLE_AUDIO = true;
 
     MyMediaFactory* f = (MyMediaFactory*)g_object_new(my_media_factory_get_type(), NULL);
-    f->monitor_index = monitor_index;
-    f->out_w = 1920;
-    f->out_h = 1200;
-    f->fps = 30;
-    f->v_bitrate_kbps = 8000;
+    f->monitor_index = cfg.monitor_index;
+    f->out_w = cfg.width > 0 ? cfg.width : 1920;
+    f->out_h = cfg.height > 0 ? cfg.height : 1200;
+    f->fps = cfg.framerate > 0 ? cfg.framerate : 30;
+    f->v_bitrate_kbps = cfg.bitrate_kbps > 0 ? cfg.bitrate_kbps : 8000;
     f->a_bitrate_bps = 128000;
     f->enable_audio = ENABLE_AUDIO;
 
 #ifdef TextOveray
     if (f->overlay_text) g_free(f->overlay_text);
-    std::ostringstream def; def << "Screen " << (monitor_index + 1);
+    std::ostringstream def; def << "Screen " << (f->monitor_index + 1);
     f->overlay_text = g_strdup(def.str().c_str());
 #endif
 
@@ -353,8 +356,8 @@ static GstRTSPMediaFactory* create_factory_for_monitor(int monitor_index) {
     gst_rtsp_media_factory_set_protocols(GST_RTSP_MEDIA_FACTORY(f), GST_RTSP_LOWER_TRANS_UDP_MCAST);
     gst_rtsp_media_factory_set_multicast_iface(GST_RTSP_MEDIA_FACTORY(f), g_server_ip.c_str());
 
-    const int base_octet = 11 + monitor_index;
-    const int base_port = 15000 + monitor_index * 20;
+    const int base_octet = 11 + f->monitor_index;
+    const int base_port = 15000 + f->monitor_index * 20;
     std::ostringstream ip; ip << "239.255.10." << base_octet;
     GstRTSPAddressPool* pool = gst_rtsp_address_pool_new();
     gst_rtsp_address_pool_add_range(pool, ip.str().c_str(), ip.str().c_str(), base_port, base_port + 19, 16);
@@ -403,12 +406,9 @@ static void initialize_gstreamer(int* argc, char*** argv, RtspServerContext * ct
 }
 
 static void configure_rtsp_server(RtspServerContext * ctx) {
-    int monitor_count = DetectMonitorCount();
-    g_print("감지된 모니터 개수: %d\n", monitor_count);
-    ctx->factories.reserve(monitor_count);
-
-    for (int i = 0; i < monitor_count; ++i) {
-        GstRTSPMediaFactory* f = create_factory_for_monitor(i);
+    ctx->factories.reserve(g_configs.size());
+    for (size_t i = 0; i < g_configs.size(); ++i) {
+        GstRTSPMediaFactory* f = create_factory_from_config(g_configs[i]);
         ctx->factories.push_back(f);
         std::ostringstream mount; mount << "/screen" << (i + 1);
         gst_rtsp_mount_points_add_factory(ctx->mounts, mount.str().c_str(), f);
@@ -438,16 +438,22 @@ static void cleanup_resources(RtspServerContext * ctx) {
     if (ctx->server)  g_object_unref(ctx->server);
     if (ctx->loop)    g_main_loop_unref(ctx->loop);
     // reset pointers to avoid double free on repeated start/stop
-    ctx->loop = nullptr;
-    ctx->server = nullptr;
-    ctx->mounts = nullptr;
+    ctx->loop = NULL;
+    ctx->server = NULL;
+    ctx->mounts = NULL;
     ctx->factories.clear();
 }
 
 // 서버를 백그라운드 스레드에서 실행하도록 수정. `serverIp`는 서버가
 // 바인딩할 주소이며 전역 변수로 보관되어 이후 GStreamer 초기화 시
 // 사용된다.
-void RunScreenCaptureRtspServer(const char* serverIp) {
+void RunScreenCaptureRtspServer(const char* serverIp,
+                                const StreamConfigNative* configs,
+                                int count) {
+    g_configs.clear();
+    if (configs && count > 0) {
+        g_configs.assign(configs, configs + count);
+    }
     if (serverIp) {
         g_server_ip = serverIp;
     } else {
@@ -459,7 +465,7 @@ void RunScreenCaptureRtspServer(const char* serverIp) {
         return;
     }
     g_server_thread = std::thread([]() {
-        int argc = 0; char** argv = nullptr;
+        int argc = 0; char** argv = NULL;
         initialize_gstreamer(&argc, &argv, &g_ctx);
         configure_rtsp_server(&g_ctx);
         start_rtsp_server(&g_ctx); // 내부에서 g_main_loop_run 수행
@@ -470,7 +476,7 @@ void RunScreenCaptureRtspServer(const char* serverIp) {
 
 void StopScreenCaptureRtspServer() {
     if (g_ctx.server) {
-        gst_rtsp_server_client_filter(g_ctx.server, force_client_disconnect, nullptr);
+        gst_rtsp_server_client_filter(g_ctx.server, force_client_disconnect, NULL);
         GstRTSPSessionPool* pool = gst_rtsp_server_get_session_pool(g_ctx.server);
         if (pool) {
             gst_rtsp_session_pool_cleanup(pool);

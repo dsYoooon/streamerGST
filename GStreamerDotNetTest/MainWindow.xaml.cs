@@ -27,6 +27,7 @@ namespace GStreamerDotNetTest
         {
             private GstPlayer _player;
             private GstVideoHost _videoHost;
+            private StreamConfig[] _configs = Array.Empty<StreamConfig>();
 
             private class StreamSetting
             {
@@ -68,10 +69,36 @@ namespace GStreamerDotNetTest
                 _player = new GstPlayer(_videoHost.Handle);
             }
 
+            private StreamConfig[] CollectStreamConfigs()
+            {
+                var list = new List<StreamConfig>();
+                foreach (var s in _streamSettings)
+                {
+                    var cfg = new StreamConfig();
+                    int.TryParse(s.Monitor.Text, out cfg.MonitorIndex);
+                    int.TryParse(s.CropX.Text, out cfg.CropX);
+                    int.TryParse(s.CropY.Text, out cfg.CropY);
+                    int.TryParse(s.CropW.Text, out cfg.CropW);
+                    int.TryParse(s.CropH.Text, out cfg.CropH);
+                    switch (s.Resolution.SelectedItem as string)
+                    {
+                        case "1080p": cfg.Width = 1920; cfg.Height = 1080; break;
+                        case "720p": cfg.Width = 1280; cfg.Height = 720; break;
+                        default: cfg.Width = 0; cfg.Height = 0; break;
+                    }
+                    int.TryParse(s.FrameRate.Text, out cfg.Framerate);
+                    int.TryParse(s.Bitrate.Text, out cfg.BitrateKbps);
+                    int.TryParse(s.Keyframe.Text, out cfg.KeyframeInterval);
+                    list.Add(cfg);
+                }
+                return list.ToArray();
+            }
+
             private void btnPlay_Click(object sender, RoutedEventArgs e)
             {
                 string serverIp = Textbox_serverIP.Text;
-                _player?.StartScreenCaptureServer(serverIp);
+                _configs = CollectStreamConfigs();
+                _player?.StartScreenCaptureServer(serverIp, _configs);
             }
 
             private void btnStop_Click(object sender, RoutedEventArgs e)
@@ -99,7 +126,10 @@ namespace GStreamerDotNetTest
                     int idx = int.Parse(match.Groups[1].Value);
                     monitorIndex = Math.Max(0, idx - 1);
                 }
-                _player?.StartScreenCapture(monitorIndex);
+                if (_configs != null && monitorIndex < _configs.Length)
+                {
+                    _player?.StartScreenCapture(_configs[monitorIndex]);
+                }
             }
         }
 
@@ -183,10 +213,9 @@ namespace GStreamerDotNetTest
             return panel;
         }
 
-        private void BtnSaveSetting_Click(object sender, RoutedEventArgs e)
-        {
-            string serverIp = Textbox_serverIP.Text;
-            _player?.StartScreenCaptureServer(serverIp);
-        }
+            private void BtnSaveSetting_Click(object sender, RoutedEventArgs e)
+            {
+                _configs = CollectStreamConfigs();
+            }
     }
 }
