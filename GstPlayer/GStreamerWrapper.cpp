@@ -78,17 +78,12 @@ namespace GStreamerWrapper {
         g_object_set(src,
             "monitor-index", config.MonitorIndex,
             "show-cursor", TRUE,
-            "crop-x", config.CropX,
-            "crop-y", config.CropY,
-            "crop-width", config.CropW,
-            "crop-height", config.CropH,
+   
             "capture-api", 1,
             NULL);
 
         std::ostringstream caps_str;
-        caps_str << "video/x-raw,format=NV12,width=" << config.Width
-                 << ",height=" << config.Height
-                 << ",framerate=" << config.Framerate << "/1";
+        caps_str << "video/x-raw,format=NV12,framerate=30/1";
         GstCaps* caps = gst_caps_from_string(caps_str.str().c_str());
         g_object_set(capsfilter, "caps", caps, NULL);
         gst_caps_unref(caps);

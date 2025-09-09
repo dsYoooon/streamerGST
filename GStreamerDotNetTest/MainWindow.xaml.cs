@@ -90,15 +90,16 @@ namespace GStreamerDotNetTest
                         default:
                             if (DisplayHelper.TryGetMonitorSize(cfg.MonitorIndex, out var w, out var h))
                             {
-                                cfg.Width = w;
-                                cfg.Height = h;
-                            }
+                                cfg.Width = cfg.CropW;
+                                cfg.Height = cfg.CropH;
+                        }
                             else
                             {
                                 cfg.Width = 0;
                                 cfg.Height = 0;
                             }
-                            break;
+                 
+                        break;
                     }
                     int.TryParse(s.FrameRate.Text, out cfg.Framerate);
                     int.TryParse(s.Bitrate.Text, out cfg.BitrateKbps);

@@ -369,7 +369,7 @@ static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative&
 
 #ifdef TextOveray
     if (f->overlay_text) g_free(f->overlay_text);
-    std::ostringstream def; def << "Screen " << (f->monitor_index + 1);
+    std::ostringstream def; def << "Screen " << stream_index;
     f->overlay_text = g_strdup(def.str().c_str());
 #endif
 
