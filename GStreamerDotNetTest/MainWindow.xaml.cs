@@ -16,7 +16,6 @@ using System.IO;
 using System.Security.Policy;
 using System.Text.RegularExpressions;
 using System.Windows.Controls;
-using Forms = System.Windows.Forms;
 
 
 namespace GStreamerDotNetTest
@@ -89,11 +88,10 @@ namespace GStreamerDotNetTest
                         case "720p": cfg.Width = 1280; cfg.Height = 720; break;
                         case "Input":
                         default:
-                            if (cfg.MonitorIndex >= 0 && cfg.MonitorIndex < Forms.Screen.AllScreens.Length)
+                            if (DisplayHelper.TryGetMonitorSize(cfg.MonitorIndex, out var w, out var h))
                             {
-                                var bounds = Forms.Screen.AllScreens[cfg.MonitorIndex].Bounds;
-                                cfg.Width = bounds.Width;
-                                cfg.Height = bounds.Height;
+                                cfg.Width = w;
+                                cfg.Height = h;
                             }
                             else
                             {
@@ -190,30 +188,47 @@ namespace GStreamerDotNetTest
             cropPanel.Children.Add(new Label { Content = "H" }); cropPanel.Children.Add(setting.CropH);
             root.Children.Add(LabeledControl("Crop:", cropPanel));
 
+            setting.Monitor.SelectionChanged += (s, e) =>
+            {
+                if (setting.Monitor.SelectedItem is string txt &&
+                    int.TryParse(txt, out int idx) &&
+                    DisplayHelper.TryGetMonitorSize(idx, out int mw, out int mh))
+                {
+                    setting.CropX.Text = "0";
+                    setting.CropY.Text = "0";
+                    setting.CropW.Text = mw.ToString();
+                    setting.CropH.Text = mh.ToString();
+                }
+            };
+            setting.Monitor.SelectedIndex = 0;
+
             setting.Resolution = new ComboBox();
             setting.Resolution.Items.Add("Input");
             setting.Resolution.Items.Add("1080p");
             setting.Resolution.Items.Add("720p");
+            setting.Resolution.SelectedIndex = 0;
             root.Children.Add(LabeledControl("Resolution:", setting.Resolution));
 
-            setting.FrameRate = new TextBox { Width = 60 };
+            setting.FrameRate = new TextBox { Width = 60, Text = "30" };
             root.Children.Add(LabeledControl("Frame rate:", setting.FrameRate));
 
-            setting.Bitrate = new TextBox { Width = 60 };
+            setting.Bitrate = new TextBox { Width = 60, Text = "6000" };
             root.Children.Add(LabeledControl("Bitrate:", setting.Bitrate));
 
             setting.BitrateControl = new ComboBox();
             setting.BitrateControl.Items.Add("CBR");
             setting.BitrateControl.Items.Add("VBR");
+            setting.BitrateControl.SelectedIndex = 0;
             root.Children.Add(LabeledControl("Bitrate Control:", setting.BitrateControl));
 
-            setting.Keyframe = new TextBox { Width = 60 };
+            setting.Keyframe = new TextBox { Width = 60, Text = "1" };
             root.Children.Add(LabeledControl("Keyframe Interval:", setting.Keyframe));
 
             setting.Profile = new ComboBox();
             setting.Profile.Items.Add("main");
             setting.Profile.Items.Add("baseline");
             setting.Profile.Items.Add("high");
+            setting.Profile.SelectedItem = "baseline";
             root.Children.Add(LabeledControl("Profile:", setting.Profile));
 
             tab.Content = root;
