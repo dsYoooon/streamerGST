@@ -29,6 +29,7 @@ namespace GStreamerDotNetTest
             private GstVideoHost _videoHost;
             private StreamConfig[] _configs = Array.Empty<StreamConfig>();
 
+
             private class StreamSetting
             {
                 public ComboBox Monitor;
@@ -75,6 +76,7 @@ namespace GStreamerDotNetTest
                 foreach (var s in _streamSettings)
                 {
                     var cfg = new StreamConfig();
+
                     int.TryParse(s.Monitor.Text, out cfg.MonitorIndex);
                     int.TryParse(s.CropX.Text, out cfg.CropX);
                     int.TryParse(s.CropY.Text, out cfg.CropY);

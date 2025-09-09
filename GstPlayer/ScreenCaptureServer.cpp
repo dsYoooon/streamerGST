@@ -454,6 +454,7 @@ void RunScreenCaptureRtspServer(const char* serverIp,
     if (configs && count > 0) {
         g_configs.assign(configs, configs + count);
     }
+
     if (serverIp) {
         g_server_ip = serverIp;
     } else {
