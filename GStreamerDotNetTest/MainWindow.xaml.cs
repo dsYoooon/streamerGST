@@ -16,6 +16,7 @@ using System.IO;
 using System.Security.Policy;
 using System.Text.RegularExpressions;
 using System.Windows.Controls;
+using Forms = System.Windows.Forms;
 
 
 namespace GStreamerDotNetTest
@@ -86,7 +87,20 @@ namespace GStreamerDotNetTest
                     {
                         case "1080p": cfg.Width = 1920; cfg.Height = 1080; break;
                         case "720p": cfg.Width = 1280; cfg.Height = 720; break;
-                        default: cfg.Width = 0; cfg.Height = 0; break;
+                        case "Input":
+                        default:
+                            if (cfg.MonitorIndex >= 0 && cfg.MonitorIndex < Forms.Screen.AllScreens.Length)
+                            {
+                                var bounds = Forms.Screen.AllScreens[cfg.MonitorIndex].Bounds;
+                                cfg.Width = bounds.Width;
+                                cfg.Height = bounds.Height;
+                            }
+                            else
+                            {
+                                cfg.Width = 0;
+                                cfg.Height = 0;
+                            }
+                            break;
                     }
                     int.TryParse(s.FrameRate.Text, out cfg.Framerate);
                     int.TryParse(s.Bitrate.Text, out cfg.BitrateKbps);

@@ -78,10 +78,10 @@ namespace GStreamerWrapper {
         g_object_set(src,
             "monitor-index", config.MonitorIndex,
             "show-cursor", TRUE,
-            "left", config.CropX,
-            "top", config.CropY,
-            "width", config.CropW,
-            "height", config.CropH,
+            "crop-x", config.CropX,
+            "crop-y", config.CropY,
+            "crop-width", config.CropW,
+            "crop-height", config.CropH,
             NULL);
 
         std::ostringstream caps_str;

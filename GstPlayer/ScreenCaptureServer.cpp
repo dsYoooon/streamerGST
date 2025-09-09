@@ -76,6 +76,10 @@ static GstRTSPFilterResult force_client_disconnect(GstRTSPServer*, GstRTSPClient
 typedef struct _MyMediaFactory {
     GstRTSPMediaFactory parent;
     int monitor_index;
+    int crop_x;
+    int crop_y;
+    int crop_w;
+    int crop_h;
     int out_w, out_h;
     int fps;
     int v_bitrate_kbps;
@@ -121,6 +125,10 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
     MyMediaFactory* self = (MyMediaFactory*)factory;
 
     const gint monitor_index = self->monitor_index;
+    const gint crop_x = self->crop_x;
+    const gint crop_y = self->crop_y;
+    const gint crop_w = self->crop_w;
+    const gint crop_h = self->crop_h;
     const gint out_w = (self->out_w & ~1);
     const gint out_h = (self->out_h & ~1);
     const gint fps = self->fps;
@@ -163,7 +171,14 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
     gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vdown, vconv, tover, vconv2, vq1, venc, vparse, vcf, vq2, vpay, NULL);
 #endif
 
-    g_object_set(vsrc, "monitor-index", monitor_index, "show-cursor", TRUE, NULL);
+    g_object_set(vsrc,
+        "monitor-index", monitor_index,
+        "show-cursor", TRUE,
+        "crop-x", crop_x,
+        "crop-y", crop_y,
+        "crop-width", crop_w,
+        "crop-height", crop_h,
+        NULL);
 
     // GPU caps
     {
@@ -329,6 +344,10 @@ static void my_media_factory_init(MyMediaFactory * self) {
     self->overlay_text = g_strdup("");
     self->overlay_elem = NULL;
 #endif
+    self->crop_x = 0;
+    self->crop_y = 0;
+    self->crop_w = 0;
+    self->crop_h = 0;
 }
 
 static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative& cfg) {
@@ -336,6 +355,10 @@ static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative&
 
     MyMediaFactory* f = (MyMediaFactory*)g_object_new(my_media_factory_get_type(), NULL);
     f->monitor_index = cfg.monitor_index;
+    f->crop_x = cfg.crop_x;
+    f->crop_y = cfg.crop_y;
+    f->crop_w = cfg.crop_w;
+    f->crop_h = cfg.crop_h;
     f->out_w = cfg.width > 0 ? cfg.width : 1920;
     f->out_h = cfg.height > 0 ? cfg.height : 1200;
     f->fps = cfg.framerate > 0 ? cfg.framerate : 30;
