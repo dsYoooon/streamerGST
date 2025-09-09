@@ -27,7 +27,8 @@ namespace GStreamerDotNetTest
         {
             private GstPlayer _player;
             private GstVideoHost _videoHost;
-            private GstPlayer.StreamConfig[] _configs = Array.Empty<GstPlayer.StreamConfig>();
+            private StreamConfig[] _configs = Array.Empty<StreamConfig>();
+
 
             private class StreamSetting
             {
@@ -69,12 +70,13 @@ namespace GStreamerDotNetTest
                 _player = new GstPlayer(_videoHost.Handle);
             }
 
-            private GstPlayer.StreamConfig[] CollectStreamConfigs()
+            private StreamConfig[] CollectStreamConfigs()
             {
-                var list = new List<GstPlayer.StreamConfig>();
+                var list = new List<StreamConfig>();
                 foreach (var s in _streamSettings)
                 {
-                    var cfg = new GstPlayer.StreamConfig();
+                    var cfg = new StreamConfig();
+
                     int.TryParse(s.Monitor.Text, out cfg.MonitorIndex);
                     int.TryParse(s.CropX.Text, out cfg.CropX);
                     int.TryParse(s.CropY.Text, out cfg.CropY);
