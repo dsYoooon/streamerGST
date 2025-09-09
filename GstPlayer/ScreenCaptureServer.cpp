@@ -350,7 +350,8 @@ static void my_media_factory_init(MyMediaFactory * self) {
     self->crop_h = 0;
 }
 
-static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative& cfg) {
+static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative& cfg,
+                                                      int stream_index) {
     const bool ENABLE_AUDIO = true;
 
     MyMediaFactory* f = (MyMediaFactory*)g_object_new(my_media_factory_get_type(), NULL);
@@ -379,8 +380,12 @@ static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative&
     gst_rtsp_media_factory_set_protocols(GST_RTSP_MEDIA_FACTORY(f), GST_RTSP_LOWER_TRANS_UDP_MCAST);
     gst_rtsp_media_factory_set_multicast_iface(GST_RTSP_MEDIA_FACTORY(f), g_server_ip.c_str());
 
-    const int base_octet = 11 + f->monitor_index;
-    const int base_port = 15000 + f->monitor_index * 20;
+    // Ports and multicast IPs previously depended on the monitor index. This
+    // caused collisions when multiple streams originated from the same monitor.
+    // Instead, derive them from the sequential stream index so that every
+    // stream gets a unique range regardless of monitor configuration.
+    const int base_octet = 11 + stream_index;
+    const int base_port = 15000 + stream_index * 20;
     std::ostringstream ip; ip << "239.255.10." << base_octet;
     GstRTSPAddressPool* pool = gst_rtsp_address_pool_new();
     gst_rtsp_address_pool_add_range(pool, ip.str().c_str(), ip.str().c_str(), base_port, base_port + 19, 16);
@@ -431,7 +436,7 @@ static void initialize_gstreamer(int* argc, char*** argv, RtspServerContext * ct
 static void configure_rtsp_server(RtspServerContext * ctx) {
     ctx->factories.reserve(g_configs.size());
     for (size_t i = 0; i < g_configs.size(); ++i) {
-        GstRTSPMediaFactory* f = create_factory_from_config(g_configs[i]);
+        GstRTSPMediaFactory* f = create_factory_from_config(g_configs[i], static_cast<int>(i));
         ctx->factories.push_back(f);
         std::ostringstream mount; mount << "/screen" << (i + 1);
         gst_rtsp_mount_points_add_factory(ctx->mounts, mount.str().c_str(), f);
