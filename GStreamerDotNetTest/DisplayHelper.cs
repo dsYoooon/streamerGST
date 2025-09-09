@@ -20,6 +20,18 @@ namespace GStreamerDotNetTest
         [DllImport("user32.dll")]
         private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc callback, IntPtr data);
 
+        public static int GetMonitorCount()
+        {
+            int count = 0;
+            EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero,
+                (IntPtr hMonitor, IntPtr hdc, ref RECT rect, IntPtr data) =>
+                {
+                    count++;
+                    return true;
+                }, IntPtr.Zero);
+            return count;
+        }
+
         public static bool TryGetMonitorSize(int index, out int width, out int height)
         {
             var rects = new List<RECT>();

@@ -68,6 +68,13 @@ namespace GStreamerDotNetTest
 
                 // HwndHost가 제공하는 창 핸들(Handle)을 GstPlayer에 전달
                 _player = new GstPlayer(_videoHost.Handle);
+
+                int monitorCount = DisplayHelper.GetMonitorCount();
+                var buttons = new[] { btnM1Play, btnM2Play, btnM3Play, btnM4Play };
+                for (int i = 0; i < buttons.Length; i++)
+                {
+                    buttons[i].Visibility = i < monitorCount ? Visibility.Visible : Visibility.Collapsed;
+                }
             }
 
             private StreamConfig[] CollectStreamConfigs()
@@ -141,9 +148,23 @@ namespace GStreamerDotNetTest
                     int idx = int.Parse(match.Groups[1].Value);
                     monitorIndex = Math.Max(0, idx - 1);
                 }
-                if (_configs != null && monitorIndex < _configs.Length)
+
+                if (DisplayHelper.TryGetMonitorSize(monitorIndex, out int width, out int height))
                 {
-                    _player?.StartScreenCapture(_configs[monitorIndex]);
+                    var cfg = new StreamConfig
+                    {
+                        MonitorIndex = monitorIndex,
+                        CropX = 0,
+                        CropY = 0,
+                        CropW = width,
+                        CropH = height,
+                        Width = width,
+                        Height = height,
+                        Framerate = 30,
+                        BitrateKbps = 6000,
+                        KeyframeInterval = 1
+                    };
+                    _player?.StartScreenCapture(cfg);
                 }
             }
         }
