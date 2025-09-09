@@ -82,6 +82,7 @@ namespace GStreamerWrapper {
             "crop-y", config.CropY,
             "crop-width", config.CropW,
             "crop-height", config.CropH,
+            "capture-api", 1,
             NULL);
 
         std::ostringstream caps_str;
@@ -91,9 +92,10 @@ namespace GStreamerWrapper {
         GstCaps* caps = gst_caps_from_string(caps_str.str().c_str());
         g_object_set(capsfilter, "caps", caps, NULL);
         gst_caps_unref(caps);
-
+        gst_debug_set_default_threshold(GST_LEVEL_INFO);
         gst_bin_add_many(GST_BIN(pipeline), src, conv, capsfilter, sink, NULL);
         if (!gst_element_link_many(src, conv, capsfilter, sink, NULL)) {
+            gst_debug_set_default_threshold(GST_LEVEL_ERROR);
             g_printerr("요소 연결 실패\n");
             gst_object_unref(pipeline);
             pipeline = nullptr;

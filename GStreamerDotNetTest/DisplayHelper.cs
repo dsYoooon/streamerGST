@@ -24,7 +24,7 @@ namespace GStreamerDotNetTest
         {
             var rects = new List<RECT>();
             EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero,
-                (hMonitor, hdc, ref RECT rect, IntPtr data) =>
+                (IntPtr hMonitor, IntPtr hdc, ref RECT rect, IntPtr data) =>
                 {
                     rects.Add(rect);
                     return true;
