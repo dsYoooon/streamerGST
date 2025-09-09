@@ -2,6 +2,9 @@
 #include "GStreamerWrapper.h"
 #include "ScreenCaptureServer.h"
 
+#include <vector>
+#include <sstream>
+
 // 필요한 .NET 네임스페이스 추가
 using namespace System::Runtime::InteropServices; // GCHandle을 위해 추가
 using namespace System::Diagnostics;             // Debug 클래스를 위해 추가
@@ -56,25 +59,41 @@ namespace GStreamerWrapper {
     {
         Stop();
     }
-    void GstPlayer::StartScreenCapture(int monitorIndex)
+    void GstPlayer::StartScreenCapture(StreamConfig config)
     {
         Stop();
 
         pipeline = gst_pipeline_new("screen-preview");
         GstElement* src = gst_element_factory_make("d3d11screencapturesrc", "src");
         GstElement* conv = gst_element_factory_make("d3d11convert", "conv");
+        GstElement* capsfilter = gst_element_factory_make("capsfilter", "caps");
         GstElement* sink = gst_element_factory_make("d3d11videosink", "sink");
 
-        if (!pipeline || !src || !conv || !sink) {
+        if (!pipeline || !src || !conv || !capsfilter || !sink) {
             g_printerr("파이프라인 생성 실패\n");
             if (pipeline) { gst_object_unref(pipeline); pipeline = nullptr; }
             return;
         }
 
-        g_object_set(src, "monitor-index", monitorIndex, "show-cursor", TRUE, NULL);
+        g_object_set(src,
+            "monitor-index", config.MonitorIndex,
+            "show-cursor", TRUE,
+            "left", config.CropX,
+            "top", config.CropY,
+            "width", config.CropW,
+            "height", config.CropH,
+            NULL);
 
-        gst_bin_add_many(GST_BIN(pipeline), src, conv, sink, NULL);
-        if (!gst_element_link_many(src, conv, sink, NULL)) {
+        std::ostringstream caps_str;
+        caps_str << "video/x-raw,format=NV12,width=" << config.Width
+                 << ",height=" << config.Height
+                 << ",framerate=" << config.Framerate << "/1";
+        GstCaps* caps = gst_caps_from_string(caps_str.str().c_str());
+        g_object_set(capsfilter, "caps", caps, NULL);
+        gst_caps_unref(caps);
+
+        gst_bin_add_many(GST_BIN(pipeline), src, conv, capsfilter, sink, NULL);
+        if (!gst_element_link_many(src, conv, capsfilter, sink, NULL)) {
             g_printerr("요소 연결 실패\n");
             gst_object_unref(pipeline);
             pipeline = nullptr;
@@ -82,7 +101,6 @@ namespace GStreamerWrapper {
         }
 
         gcHandle = GCHandle::Alloc(this);
-
         GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
         gst_bus_add_signal_watch(bus);
         g_signal_connect(bus, "message", G_CALLBACK(BusMessageCallback), GCHandle::ToIntPtr(gcHandle).ToPointer());
@@ -91,15 +109,33 @@ namespace GStreamerWrapper {
 
         gst_element_set_state(pipeline, GST_STATE_PLAYING);
     }
-    void GstPlayer::StartScreenCaptureServer(String^ serverIp)
+
+    void GstPlayer::StartScreenCaptureServer(String^ serverIp, array<StreamConfig>^ configs)
     {
-        // 기존 파이프라인 정지 후 새로운 RTSP 서버 실행. RTSP 서버는
-        // 내부적으로 별도의 스레드에서 실행되므로 이 호출은 UI 스레드
-        // 를 블로킹하지 않습니다.
         Stop();
 
         IntPtr ipPtr = Marshal::StringToHGlobalAnsi(serverIp);
-        RunScreenCaptureRtspServer(static_cast<const char*>(ipPtr.ToPointer()));
+
+        std::vector<StreamConfigNative> nativeConfigs;
+        for each (StreamConfig cfg in configs)
+        {
+            StreamConfigNative ncfg;
+            ncfg.monitor_index = cfg.MonitorIndex;
+            ncfg.crop_x = cfg.CropX;
+            ncfg.crop_y = cfg.CropY;
+            ncfg.crop_w = cfg.CropW;
+            ncfg.crop_h = cfg.CropH;
+            ncfg.width = cfg.Width;
+            ncfg.height = cfg.Height;
+            ncfg.framerate = cfg.Framerate;
+            ncfg.bitrate_kbps = cfg.BitrateKbps;
+            ncfg.keyframe_interval = cfg.KeyframeInterval;
+            nativeConfigs.push_back(ncfg);
+        }
+
+        RunScreenCaptureRtspServer(static_cast<const char*>(ipPtr.ToPointer()),
+                                   nativeConfigs.data(),
+                                   (int)nativeConfigs.size());
         Marshal::FreeHGlobal(ipPtr);
     }
 

@@ -18,6 +18,7 @@ namespace GStreamerWrapper {
 // run time.  It is now stored in a global that is set when the server is
 // started.
 static std::string g_server_ip;
+static std::vector<StreamConfigNative> g_configs;
 
 // ===== 모니터 개수 탐지 =====
 static BOOL CALLBACK CountMonitorsProc(HMONITOR, HDC, LPRECT, LPARAM lParam) {
@@ -328,15 +329,15 @@ static void my_media_factory_init(MyMediaFactory * self) {
 #endif
 }
 
-static GstRTSPMediaFactory* create_factory_for_monitor(int monitor_index) {
+static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative& cfg) {
     const bool ENABLE_AUDIO = true;
 
     MyMediaFactory* f = (MyMediaFactory*)g_object_new(my_media_factory_get_type(), NULL);
-    f->monitor_index = monitor_index;
-    f->out_w = 1920;
-    f->out_h = 1200;
-    f->fps = 30;
-    f->v_bitrate_kbps = 8000;
+    f->monitor_index = cfg.monitor_index;
+    f->out_w = cfg.width > 0 ? cfg.width : 1920;
+    f->out_h = cfg.height > 0 ? cfg.height : 1200;
+    f->fps = cfg.framerate > 0 ? cfg.framerate : 30;
+    f->v_bitrate_kbps = cfg.bitrate_kbps > 0 ? cfg.bitrate_kbps : 8000;
     f->a_bitrate_bps = 128000;
     f->enable_audio = ENABLE_AUDIO;
 
@@ -403,12 +404,9 @@ static void initialize_gstreamer(int* argc, char*** argv, RtspServerContext * ct
 }
 
 static void configure_rtsp_server(RtspServerContext * ctx) {
-    int monitor_count = DetectMonitorCount();
-    g_print("감지된 모니터 개수: %d\n", monitor_count);
-    ctx->factories.reserve(monitor_count);
-
-    for (int i = 0; i < monitor_count; ++i) {
-        GstRTSPMediaFactory* f = create_factory_for_monitor(i);
+    ctx->factories.reserve(g_configs.size());
+    for (size_t i = 0; i < g_configs.size(); ++i) {
+        GstRTSPMediaFactory* f = create_factory_from_config(g_configs[i]);
         ctx->factories.push_back(f);
         std::ostringstream mount; mount << "/screen" << (i + 1);
         gst_rtsp_mount_points_add_factory(ctx->mounts, mount.str().c_str(), f);
@@ -447,7 +445,10 @@ static void cleanup_resources(RtspServerContext * ctx) {
 // 서버를 백그라운드 스레드에서 실행하도록 수정. `serverIp`는 서버가
 // 바인딩할 주소이며 전역 변수로 보관되어 이후 GStreamer 초기화 시
 // 사용된다.
-void RunScreenCaptureRtspServer(const char* serverIp) {
+void RunScreenCaptureRtspServer(const char* serverIp,
+                                const StreamConfigNative* configs,
+                                int count) {
+    g_configs.assign(configs, configs + count);
     if (serverIp) {
         g_server_ip = serverIp;
     } else {
