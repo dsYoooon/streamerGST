@@ -211,14 +211,11 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
     // ---- 비디오 ----
     GstElement* vsrc = gst_element_factory_make("d3d11screencapturesrc", NULL);
     GstElement* vd3d = gst_element_factory_make("d3d11convert", "vd3d11conv");
-    GstElement* vdown = gst_element_factory_make("d3d11download", "vdown");     // GPU->CPU
-    GstElement* vconv = gst_element_factory_make("videoconvert", "vconv");      // CPU colorspace
-
 #ifdef TextOveray
-    GstElement* tover = gst_element_factory_make("textoverlay", "overlay");
-    GstElement* vconv2 = gst_element_factory_make("videoconvert", "vconv2");     // 호환성
+    GstElement* tover = gst_element_factory_make("dwritetextoverlay", "overlay");
 #endif
-
+    GstElement* vd3d2 = gst_element_factory_make("d3d11convert", "vd3d11conv2");
+    GstElement* vdown = NULL; // CPU path when using non-D3D11 encoder
     GstElement* vq1 = gst_element_factory_make("queue", "vqueue1");
     // [CHANGE] 요구사항: HW ON이면 x264 제외 HW 인코더 중 랭크 최상 선택, HW OFF면 x264 고정
     const char* enc_name = nullptr;
@@ -241,15 +238,19 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
         if (bin) gst_object_unref(bin);
         return NULL;
     }
+    const gboolean use_d3d11_encoder = g_str_has_prefix(enc_name, "d3d11");
+    if (!use_d3d11_encoder) {
+        vdown = gst_element_factory_make("d3d11download", "vdown");
+    }
     GstElement* vparse = gst_element_factory_make("h264parse", "vparse");
     GstElement* vcf = gst_element_factory_make("capsfilter", "vpaycaps");
     GstElement* vq2 = gst_element_factory_make("queue", "vqueue2");
     GstElement* vpay = gst_element_factory_make("rtph264pay", "pay0");
 
 #ifndef TextOveray
-    if (!vsrc || !vd3d || !vdown || !vconv || !vq1 || !venc || !vparse || !vcf || !vq2 || !vpay) {
+    if (!vsrc || !vd3d || !vd3d2 || (!use_d3d11_encoder && !vdown) || !vq1 || !venc || !vparse || !vcf || !vq2 || !vpay) {
 #else
-    if (!vsrc || !vd3d || !vdown || !vconv || !tover || !vconv2 || !vq1 || !venc || !vparse || !vcf || !vq2 || !vpay) {
+    if (!vsrc || !vd3d || !tover || !vd3d2 || (!use_d3d11_encoder && !vdown) || !vq1 || !venc || !vparse || !vcf || !vq2 || !vpay) {
 #endif
         g_printerr("비디오 요소 생성 실패\n");
         if (bin) gst_object_unref(bin);
@@ -257,9 +258,15 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
     }
 
 #ifndef TextOveray
-    gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
+    if (use_d3d11_encoder)
+        gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vd3d2, vq1, venc, vparse, vcf, vq2, vpay, NULL);
+    else
+        gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vd3d2, vdown, vq1, venc, vparse, vcf, vq2, vpay, NULL);
 #else
-    gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vdown, vconv, tover, vconv2, vq1, venc, vparse, vcf, vq2, vpay, NULL);
+    if (use_d3d11_encoder)
+        gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vq1, venc, vparse, vcf, vq2, vpay, NULL);
+    else
+        gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vdown, vq1, venc, vparse, vcf, vq2, vpay, NULL);
 #endif
 
     g_object_set(vsrc,
@@ -271,28 +278,13 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
         "crop-height", crop_h,
         NULL);
 
-    // GPU caps
+    // GPU caps and overlay
     {
-        std::ostringstream css_gpu;
-        css_gpu << "video/x-raw(memory:D3D11Memory),format=NV12," <<
+        std::ostringstream css_gpu_rgba;
+        css_gpu_rgba << "video/x-raw(memory:D3D11Memory),format=BGRA," <<
             "width=" << out_w << ",height=" << out_h <<
             ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
-        if (!link_ok(vsrc, vd3d)) return bin;
-        if (!link_ok(vd3d, vdown, caps_from(css_gpu.str()))) return bin;
-    }
-
-    // CPU caps
-    {
-        std::ostringstream css_cpu;
-        css_cpu << "video/x-raw,format=NV12," <<
-            "width=" << out_w << ",height=" << out_h <<
-            ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
-        if (!link_ok(vdown, vconv)) return bin;
-#ifndef TextOveray
-        if (!link_ok(vconv, vq1, caps_from(css_cpu.str()))) return bin;
-#else
-        if (!link_ok(vconv, tover, caps_from(css_cpu.str()))) return bin;
-#endif
+        if (!link_ok(vsrc, vd3d, caps_from(css_gpu_rgba.str()))) return bin;
     }
 
 #ifdef TextOveray
@@ -312,9 +304,24 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
         g_object_add_weak_pointer(G_OBJECT(tover), (gpointer*)&self->overlay_elem);
     }
 
-    if (!link_ok(tover, vconv2)) return bin;
-    if (!link_ok(vconv2, vq1)) return bin;
+    if (!link_ok(vd3d, tover)) return bin;
+    if (!link_ok(tover, vd3d2)) return bin;
+#else
+    if (!link_ok(vd3d, vd3d2)) return bin;
 #endif
+
+    {
+        std::ostringstream css_gpu_nv12;
+        css_gpu_nv12 << "video/x-raw(memory:D3D11Memory),format=NV12," <<
+            "width=" << out_w << ",height=" << out_h <<
+            ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
+        if (use_d3d11_encoder) {
+            if (!link_ok(vd3d2, vq1, caps_from(css_gpu_nv12.str()))) return bin;
+        } else {
+            if (!link_ok(vd3d2, vdown, caps_from(css_gpu_nv12.str()))) return bin;
+            if (!link_ok(vdown, vq1)) return bin;
+        }
+    }
 
     static const char* kH264Profile = "high";
     static const char* kH264Level = "5";
@@ -352,31 +359,7 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
 
     g_object_set(vparse, "config-interval", 1, NULL);
     g_object_set(vpay, "pt", 96, "config-interval", 1, "mtu", 1200, NULL);
-    // [CHANGE] d3d11h264enc는 D3D11Memory를 기대하므로 CPU→GPU 업로드 필요
-    GstElement* vup = NULL;
-    const gboolean use_d3d11_encoder = g_str_has_prefix(enc_name, "d3d11");
-
-    if (use_d3d11_encoder) {
-        vup = gst_element_factory_make("d3d11upload", "vupload");
-        if (!vup) {
-            g_printerr("d3d11upload 생성 실패\n");
-            return bin;
-        }
-        gst_bin_add(GST_BIN(bin), vup);
-
-        // 업로드 후 GPU caps (메모리:D3D11Memory/NV12)
-        std::ostringstream css_gpu_to_enc;
-        css_gpu_to_enc << "video/x-raw(memory:D3D11Memory),format=NV12,"
-            << "width=" << out_w << ",height=" << out_h
-            << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
-
-        if (!link_ok(vq1, vup)) return bin;
-        if (!link_ok(vup, venc, caps_from(css_gpu_to_enc.str()))) return bin;
-    }
-    else {
-        // 그 외 인코더(MF/QSV/NVENC/AMF/x264)는 보통 system memory도 수용
-        if (!link_ok(vq1, venc)) return bin;
-    }
+    if (!link_ok(vq1, venc)) return bin;
 
     if (!link_ok(venc, vparse) ||
         !link_ok(vparse, vcf) || !link_ok(vcf, vq2) || !link_ok(vq2, vpay))
