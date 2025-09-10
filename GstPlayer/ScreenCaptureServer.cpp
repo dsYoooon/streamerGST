@@ -46,6 +46,74 @@ static std::thread g_server_thread;
 
 // 전방 선언
 static void SetOverlayText(RtspServerContext* ctx, int screen_index, const char* text);
+// ===== [ADD] 공용 프로퍼티 세터/인코더 선택 유틸 =====
+static inline gboolean has_prop(GstElement* e, const char* name) {
+    return e && g_object_class_find_property(G_OBJECT_GET_CLASS(e), name) != nullptr;
+}
+static inline void set_int_if(GstElement* e, const char* name, int v) {
+    if (has_prop(e, name)) g_object_set(e, name, v, NULL);
+}
+static inline void set_bool_if(GstElement* e, const char* name, gboolean v) {
+    if (has_prop(e, name)) g_object_set(e, name, v, NULL);
+}
+static inline void set_string_if(GstElement* e, const char* name, const char* v) {
+    if (has_prop(e, name)) g_object_set(e, name, v, NULL);
+}
+
+// H.264 하드웨어 인코더 후보들 중 "등록되어 있고(rank가 가장 높은)" 요소를 선택
+// ※ 필요시 후보 순서는 자유롭게 추가/조정 가능
+static const char* pick_best_hw_h264_encoder() {
+    struct Cand { const char* name; };
+    static const Cand candidates[] = {
+        {"d3d11h264enc"}, // DX11 기반
+        {"qsvh264enc"},   // Intel QuickSync
+        {"nvh264enc"},    // NVIDIA NVENC
+        {"amfh264enc"},   // AMD AMF
+        {"mfh264enc"},    // Media Foundation H264
+    };
+    const char* best = nullptr;
+    guint best_rank = 0;
+    for (const auto& c : candidates) {
+        GstElementFactory* f = gst_element_factory_find(c.name);
+        if (!f) continue;
+        guint r = gst_plugin_feature_get_rank(GST_PLUGIN_FEATURE(f));
+        if (!best || r > best_rank) {
+            best = c.name;
+            best_rank = r;
+        }
+        gst_object_unref(f);
+    }
+    return best; // nullptr이면 사용 가능한 HW 인코더 없음
+}
+
+// 인코더 공통 튜닝(존재하는 프로퍼티만 안전하게 세팅)
+// - v_kbps: kbps 기준
+// - keyint: 키프레임 간격 (GOP)
+// - fps   : 참고용(일부 인코더는 keyint=fps 형태로 사용)
+static void tune_h264_encoder(GstElement* enc, int v_kbps, int keyint, int /*fps*/) {
+    if (!enc) return;
+
+    // 비트레이트 (kbps/bps 혼용 대비: 여러 이름을 시도)
+    set_int_if(enc, "bitrate", v_kbps);                // 대부분 kbps
+    set_int_if(enc, "max-bitrate", v_kbps);
+    set_int_if(enc, "target-bitrate", v_kbps * 1000);  // 일부 bps
+
+    // 키프레임 간격/GOP
+    set_int_if(enc, "key-int-max", keyint); // x264enc
+    set_int_if(enc, "gop-size", keyint); // qsv/nvenc/d3d11 등
+    set_int_if(enc, "gop", keyint); // mf/amf 등
+
+    // 저지연/레이트컨트롤(있는 경우에만)
+    set_string_if(enc, "tune", "zerolatency"); // x264enc
+    set_bool_if(enc, "low-latency", TRUE);   // 일부 HW 인코더
+    set_string_if(enc, "rate-control", "cbr"); // qsv/nvenc/d3d11 일부
+    set_string_if(enc, "rc-mode", "cbr"); // amf 등
+
+    // H.264 스트림 포맷 관련
+    set_bool_if(enc, "byte-stream", TRUE);   // x264enc 등에만 적용됨
+    set_string_if(enc, "speed-preset", "ultrafast"); // x264enc
+    set_string_if(enc, "preset", "ultrafast"); // 일부 인코더는 preset 사용
+}
 
 // ===== 클라이언트 종료/로그 =====
 static void client_closed_callback(GstRTSPClient* client, gpointer user_data) {
@@ -84,6 +152,7 @@ typedef struct _MyMediaFactory {
     int fps;
     int v_bitrate_kbps;
     int a_bitrate_bps;
+    int keyint;  // [ADD] 키프레임 간격(GOP) - 전달값 없으면 fps 사용
     gboolean enable_audio;
     gchar* audio_device;
     gboolean use_hw_accel;
@@ -151,8 +220,27 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
 #endif
 
     GstElement* vq1 = gst_element_factory_make("queue", "vqueue1");
-    const char* enc_name = self->use_hw_accel ? "d3d11h264enc" : "x264enc";
+    // [CHANGE] 요구사항: HW ON이면 x264 제외 HW 인코더 중 랭크 최상 선택, HW OFF면 x264 고정
+    const char* enc_name = nullptr;
+    if (self->use_hw_accel) {
+        enc_name = pick_best_hw_h264_encoder(); // 없으면 nullptr
+        if (!enc_name) {
+            g_printerr("[warn] 사용 가능한 하드웨어 H.264 인코더가 없어 x264enc로 대체합니다.\n");
+            enc_name = "x264enc";
+        }
+        else {
+            g_print("[info] 선택된 하드웨어 H.264 인코더: %s\n", enc_name);
+        }
+    }
+    else {
+        enc_name = "x264enc";
+    }
     GstElement* venc = gst_element_factory_make(enc_name, "venc");
+    if (!venc) {
+        g_printerr("인코더(%s) 생성 실패\n", enc_name);
+        if (bin) gst_object_unref(bin);
+        return NULL;
+    }
     GstElement* vparse = gst_element_factory_make("h264parse", "vparse");
     GstElement* vcf = gst_element_factory_make("capsfilter", "vpaycaps");
     GstElement* vq2 = gst_element_factory_make("queue", "vqueue2");
@@ -231,37 +319,24 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
     static const char* kH264Profile = "high";
     static const char* kH264Level = "5";
 
-    if (self->use_hw_accel) {
-        g_object_set(venc, "bitrate", v_kbps, NULL);
-    } else {
-        g_object_set(venc,
-            "bitrate", v_kbps,
-            "key-int-max", fps,
-            "b-adapt", 0,
-            "bframes", 0,
-            "ref", 1,
-            "byte-stream", TRUE,
-            "speed-preset", 1,
-            "tune", 0x04,
-            NULL);
+    // [CHANGE] 공통 튜닝(있는 프로퍼티만 세팅) + x264 특성은 자동으로 감지되어 적용
+    const int keyint = (self->keyint > 0) ? self->keyint : fps;
+    tune_h264_encoder(venc, v_kbps, keyint, fps);
 
-        {
-            std::ostringstream opt;
-            opt << "level=" << kH264Level << ":vbv-maxrate=" << v_kbps << ":vbv-bufsize=" << (v_kbps * 2);
-            g_object_set(venc, "option-string", opt.str().c_str(), NULL);
-            g_object_set(venc, "nal-hrd", 2, "vbv-buf-capacity", 1000, NULL);
-        }
-
-        if (!strcmp(kH264Profile, "baseline") || !strcmp(kH264Profile, "constrained-baseline")) {
-            g_object_set(venc, "cabac", FALSE, "dct8x8", FALSE, "bframes", 0, "ref", 1, NULL);
-        }
-        else if (!strcmp(kH264Profile, "main")) {
-            g_object_set(venc, "cabac", TRUE, "dct8x8", FALSE, NULL);
-        }
-        else if (!strcmp(kH264Profile, "high")) {
-            g_object_set(venc, "cabac", TRUE, "dct8x8", TRUE, NULL);
-        }
+    // (선택) x264 전용 추가 옵션을 더 주고 싶다면 has_prop로 감싸서 세팅
+    if (g_strcmp0(enc_name, "x264enc") == 0) {
+        // 예: 프로파일/레벨/HRD/버퍼 등
+        set_string_if(venc, "option-string", ("level=" + std::string(kH264Level) +
+            ":vbv-maxrate=" + std::to_string(v_kbps) +
+            ":vbv-bufsize=" + std::to_string(v_kbps * 2)).c_str());
+        set_int_if(venc, "nal-hrd", 2);
+        set_int_if(venc, "vbv-buf-capacity", 1000);
+        set_int_if(venc, "b-adapt", 0);
+        set_int_if(venc, "bframes", 0);
+        set_int_if(venc, "ref", 1);
+        // speed-preset, tune, byte-stream 등은 tune_h264_encoder에서 이미 안전 적용
     }
+
 
     {
         std::ostringstream css;
@@ -277,10 +352,36 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
 
     g_object_set(vparse, "config-interval", 1, NULL);
     g_object_set(vpay, "pt", 96, "config-interval", 1, "mtu", 1200, NULL);
+    // [CHANGE] d3d11h264enc는 D3D11Memory를 기대하므로 CPU→GPU 업로드 필요
+    GstElement* vup = NULL;
+    const gboolean use_d3d11_encoder = g_str_has_prefix(enc_name, "d3d11");
 
-    if (!link_ok(vq1, venc) || !link_ok(venc, vparse) ||
+    if (use_d3d11_encoder) {
+        vup = gst_element_factory_make("d3d11upload", "vupload");
+        if (!vup) {
+            g_printerr("d3d11upload 생성 실패\n");
+            return bin;
+        }
+        gst_bin_add(GST_BIN(bin), vup);
+
+        // 업로드 후 GPU caps (메모리:D3D11Memory/NV12)
+        std::ostringstream css_gpu_to_enc;
+        css_gpu_to_enc << "video/x-raw(memory:D3D11Memory),format=NV12,"
+            << "width=" << out_w << ",height=" << out_h
+            << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
+
+        if (!link_ok(vq1, vup)) return bin;
+        if (!link_ok(vup, venc, caps_from(css_gpu_to_enc.str()))) return bin;
+    }
+    else {
+        // 그 외 인코더(MF/QSV/NVENC/AMF/x264)는 보통 system memory도 수용
+        if (!link_ok(vq1, venc)) return bin;
+    }
+
+    if (!link_ok(venc, vparse) ||
         !link_ok(vparse, vcf) || !link_ok(vcf, vq2) || !link_ok(vq2, vpay))
         return bin;
+
 
     if (self->enable_audio) {
         GstElement* asrc = gst_element_factory_make("wasapisrc", "asrc");
@@ -363,6 +464,7 @@ static void my_media_factory_init(MyMediaFactory * self) {
     self->crop_h = 0;
     self->audio_device = NULL;
     self->use_hw_accel = FALSE;
+    self->keyint = 0; // [ADD]
 }
 
 static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative& cfg,
@@ -382,6 +484,8 @@ static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative&
     if (!cfg.audio_device.empty())
         f->audio_device = g_strdup(cfg.audio_device.c_str());
     f->use_hw_accel = cfg.enable_hw_accel;
+	f->keyint = cfg.keyframe_interval > 0 ? cfg.keyframe_interval : f->fps; // [ADD]
+
 
 #ifdef TextOveray
     if (f->overlay_text) g_free(f->overlay_text);
