@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 namespace GStreamerWrapper {
 
 // Stream configuration passed from the managed layer. This simple
@@ -16,6 +18,9 @@ struct StreamConfigNative {
     int framerate;
     int bitrate_kbps;
     int keyframe_interval;
+    bool enable_audio;
+    std::string audio_device;
+    bool enable_hw_accel;
 };
 
 // Starts the RTSP screen capture server on a background thread hosting

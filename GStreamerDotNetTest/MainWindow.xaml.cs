@@ -28,6 +28,7 @@ namespace GStreamerDotNetTest
             private GstPlayer _player;
             private GstVideoHost _videoHost;
             private StreamConfig[] _configs = Array.Empty<StreamConfig>();
+            private string[] _audioDevices = Array.Empty<string>();
 
 
             private class StreamSetting
@@ -38,6 +39,9 @@ namespace GStreamerDotNetTest
                 public TextBox FrameRate, Bitrate, Keyframe;
                 public ComboBox BitrateControl;
                 public ComboBox Profile;
+                public ComboBox AudioEnable;
+                public ComboBox AudioDevice;
+                public ComboBox HwAccel;
                 public TabItem Tab;
             }
 
@@ -68,6 +72,7 @@ namespace GStreamerDotNetTest
 
                 // HwndHost가 제공하는 창 핸들(Handle)을 GstPlayer에 전달
                 _player = new GstPlayer(_videoHost.Handle);
+                _audioDevices = GstPlayer.GetAudioDevices();
 
                 int monitorCount = DisplayHelper.GetMonitorCount();
                 var buttons = new[] { btnM1Play, btnM2Play, btnM3Play, btnM4Play };
@@ -111,6 +116,9 @@ namespace GStreamerDotNetTest
                     int.TryParse(s.FrameRate.Text, out cfg.Framerate);
                     int.TryParse(s.Bitrate.Text, out cfg.BitrateKbps);
                     int.TryParse(s.Keyframe.Text, out cfg.KeyframeInterval);
+                    cfg.EnableAudio = s.AudioEnable.SelectedIndex == 0;
+                    cfg.AudioDevice = s.AudioDevice.SelectedItem as string;
+                    cfg.EnableHardwareAccel = s.HwAccel.SelectedIndex == 0;
                     list.Add(cfg);
                 }
                 return list.ToArray();
@@ -252,6 +260,23 @@ namespace GStreamerDotNetTest
             setting.Profile.Items.Add("high");
             setting.Profile.SelectedItem = "baseline";
             root.Children.Add(LabeledControl("Profile:", setting.Profile));
+
+            setting.AudioEnable = new ComboBox();
+            setting.AudioEnable.Items.Add("Use");
+            setting.AudioEnable.Items.Add("Don't use");
+            setting.AudioEnable.SelectedIndex = 0;
+            root.Children.Add(LabeledControl("Audio Stream:", setting.AudioEnable));
+
+            setting.AudioDevice = new ComboBox();
+            foreach (var dev in _audioDevices) setting.AudioDevice.Items.Add(dev);
+            if (setting.AudioDevice.Items.Count > 0) setting.AudioDevice.SelectedIndex = 0;
+            root.Children.Add(LabeledControl("Audio Device:", setting.AudioDevice));
+
+            setting.HwAccel = new ComboBox();
+            setting.HwAccel.Items.Add("Use");
+            setting.HwAccel.Items.Add("Don't use");
+            setting.HwAccel.SelectedIndex = 0;
+            root.Children.Add(LabeledControl("HW Acceleration:", setting.HwAccel));
 
             tab.Content = root;
             setting.Tab = tab;

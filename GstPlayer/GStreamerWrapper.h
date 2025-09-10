@@ -21,6 +21,9 @@ namespace GStreamerWrapper {
         int Framerate;
         int BitrateKbps;
         int KeyframeInterval;
+        bool EnableAudio;
+        String^ AudioDevice;
+        bool EnableHardwareAccel;
     };
 
     public ref class GstPlayer
@@ -44,5 +47,6 @@ namespace GStreamerWrapper {
 
         static void Initialize();
         static void Deinitialize();
+        static array<String^>^ GetAudioDevices();
     };
 }
