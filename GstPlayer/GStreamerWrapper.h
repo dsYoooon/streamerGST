@@ -24,6 +24,7 @@ namespace GStreamerWrapper {
         bool EnableAudio;
         String^ AudioDevice;
         bool EnableHardwareAccel;
+        bool EnableOsd;
     };
 
     public ref class GstPlayer

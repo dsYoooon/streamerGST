@@ -111,6 +111,7 @@ namespace GStreamerWrapper {
         gboolean enable_audio;
         gchar* audio_device;
         gboolean enable_hw_accel; // ★ 옵션 반영
+        gboolean enable_osd;
 
         // overlay
         gchar* overlay_text;
@@ -209,26 +210,31 @@ namespace GStreamerWrapper {
         /* --- 비디오 소스 & 전처리 (D3D11 경로) --- */
         GstElement* vsrc = gst_element_factory_make("d3d11screencapturesrc", NULL);
         GstElement* vd3d = gst_element_factory_make("d3d11convert", "vd3d11conv");
-        GstElement* tover = gst_element_factory_make("dwritetextoverlay", "overlay");
+        GstElement* tover = self->enable_osd ? gst_element_factory_make("dwritetextoverlay", "overlay") : NULL;
         GstElement* vd3d2 = gst_element_factory_make("d3d11convert", "vd3d11conv2");
         GstElement* vdown = gst_element_factory_make("d3d11download", "vdown");
         GstElement* vconv = gst_element_factory_make("videoconvert", "vconv");
         GstElement* vq1 = gst_element_factory_make("queue", "vqueue1");
 
-        GstElement* vencbin = gst_element_factory_make("encodebin", "vencbin");
+        GstElement* venc = self->enable_hw_accel ?
+            gst_element_factory_make("encodebin", "vencbin") :
+            gst_element_factory_make("x264enc", "venc");
         GstElement* vparse = gst_element_factory_make("h264parse", "vparse");
         GstElement* vcf = gst_element_factory_make("capsfilter", "vpaycaps");
         GstElement* vq2 = gst_element_factory_make("queue", "vqueue2");
         GstElement* vpay = gst_element_factory_make("rtph264pay", "pay0");
 
-        if (!vsrc || !vd3d || !tover || !vd3d2 || !vdown || !vconv || !vq1 ||
-            !vencbin || !vparse || !vcf || !vq2 || !vpay) {
+        if (!vsrc || !vd3d || !vd3d2 || !vdown || !vconv || !vq1 ||
+            !venc || !vparse || !vcf || !vq2 || !vpay ||
+            (self->enable_osd && !tover)) {
             g_printerr("비디오 요소 생성 실패\n");
             if (bin) gst_object_unref(bin);
             return NULL;
         }
-
-        gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vdown, vconv, vq1, vencbin, vparse, vcf, vq2, vpay, NULL);
+        if (self->enable_osd)
+            gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
+        else
+            gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
 
         // 캡처 기본 설정
         g_object_set(vsrc,
@@ -244,8 +250,8 @@ namespace GStreamerWrapper {
             if (!link_ok(vsrc, vd3d, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
         }
 
-        // 2) 텍스트 오버레이
-        {
+        // 2) 텍스트 오버레이 (옵션)
+        if (self->enable_osd) {
             const gchar* txt = (self->overlay_text && *self->overlay_text) ? self->overlay_text : "";
             g_object_set(tover, "text", txt, "font-desc", "Segoe UI 11",
                 "halignment", 0, "valignment", 2,
@@ -253,8 +259,8 @@ namespace GStreamerWrapper {
                 "shaded-background", TRUE, "draw-shadow", TRUE, NULL);
             self->overlay_elem = tover;
             g_object_add_weak_pointer(G_OBJECT(tover), (gpointer*)&self->overlay_elem);
+            if (!link_ok(vd3d, tover)) { gst_object_unref(bin); return NULL; }
         }
-        if (!link_ok(vd3d, tover)) { gst_object_unref(bin); return NULL; }
 
         // 3) GPU NV12
         {
@@ -262,7 +268,8 @@ namespace GStreamerWrapper {
             css << "video/x-raw(memory:D3D11Memory),format=NV12,"
                 << "width=" << out_w << ",height=" << out_h
                 << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
-            if (!link_ok(tover, vd3d2)) { gst_object_unref(bin); return NULL; }
+            GstElement* prev = self->enable_osd ? tover : vd3d;
+            if (!link_ok(prev, vd3d2)) { gst_object_unref(bin); return NULL; }
             if (!link_ok(vd3d2, vdown, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
         }
 
@@ -276,17 +283,26 @@ namespace GStreamerWrapper {
             if (!link_ok(vconv, vq1, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
         }
 
-        // 5) encodebin 프로파일(H.264 High) + element-added 튜닝
-        {
+        // 5) 인코더 설정
+        if (self->enable_hw_accel) {
             GstCaps* h264_caps = gst_caps_from_string("video/x-h264,profile=high");
             GstEncodingProfile* vprof = (GstEncodingProfile*)
                 gst_encoding_video_profile_new(h264_caps, /*preset*/NULL, /*restriction*/NULL, /*presence*/1);
             gst_caps_unref(h264_caps);
-            g_object_set(vencbin, "profile", vprof, NULL);
+            g_object_set(venc, "profile", vprof, NULL);
             gst_encoding_profile_unref(vprof);
 
             // 어떤 인코더가 선택되든, 위 콜백에서 옵션 기반 튜닝
-            g_signal_connect(vencbin, "element-added", G_CALLBACK(on_encodebin_element_added), self);
+            g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
+        } else {
+            g_object_set(venc,
+                "bitrate", self->v_bitrate_kbps,
+                "key-int-max", keyint,
+                "gop-size", keyint,
+                "speed-preset", 1 /*ultrafast*/,
+                "tune", 0x00000004 /*zerolatency*/,
+                "byte-stream", TRUE,
+                NULL);
         }
 
         // 6) parse → caps → queue → pay
@@ -302,8 +318,8 @@ namespace GStreamerWrapper {
         g_object_set(vq2, "leaky", 2, "max-size-buffers", 2, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
         g_object_set(vpay, "pt", 96, "config-interval", 1, "mtu", 1200, NULL);
 
-        if (!gst_element_link(vq1, vencbin)) { gst_object_unref(bin); return NULL; }
-        if (!link_ok(vencbin, vparse)) { gst_object_unref(bin); return NULL; }
+        if (!gst_element_link(vq1, venc)) { gst_object_unref(bin); return NULL; }
+        if (!link_ok(venc, vparse)) { gst_object_unref(bin); return NULL; }
         if (!link_ok(vparse, vcf)) { gst_object_unref(bin); return NULL; }
         if (!link_ok(vcf, vq2)) { gst_object_unref(bin); return NULL; }
         if (!link_ok(vq2, vpay)) { gst_object_unref(bin); return NULL; }
@@ -380,6 +396,7 @@ namespace GStreamerWrapper {
         self->crop_x = self->crop_y = self->crop_w = self->crop_h = 0;
         self->audio_device = NULL;
         self->enable_hw_accel = TRUE; // 기본값 (구조체에서 덮임)
+        self->enable_osd = TRUE;
         self->keyint = 0;
     }
 
@@ -397,6 +414,7 @@ namespace GStreamerWrapper {
         f->enable_audio = cfg.enable_audio;
         if (!cfg.audio_device.empty()) f->audio_device = g_strdup(cfg.audio_device.c_str());
         f->enable_hw_accel = cfg.enable_hw_accel;               // ★ 구조체 옵션 반영
+        f->enable_osd = cfg.enable_osd;
         f->keyint = cfg.keyframe_interval > 0 ? cfg.keyframe_interval : f->fps;
 
         if (f->overlay_text) g_free(f->overlay_text);

@@ -42,6 +42,7 @@ namespace GStreamerDotNetTest
                 public ComboBox AudioEnable;
                 public ComboBox AudioDevice;
                 public ComboBox HwAccel;
+                public ComboBox OsdEnable;
                 public TabItem Tab;
             }
 
@@ -119,6 +120,7 @@ namespace GStreamerDotNetTest
                     cfg.EnableAudio = s.AudioEnable.SelectedIndex == 0;
                     cfg.AudioDevice = s.AudioDevice.SelectedItem as string;
                     cfg.EnableHardwareAccel = s.HwAccel.SelectedIndex == 0;
+                    cfg.EnableOsd = s.OsdEnable.SelectedIndex == 0;
                     list.Add(cfg);
                 }
                 return list.ToArray();
@@ -277,6 +279,12 @@ namespace GStreamerDotNetTest
             setting.HwAccel.Items.Add("Don't use");
             setting.HwAccel.SelectedIndex = 0;
             root.Children.Add(LabeledControl("HW Acceleration:", setting.HwAccel));
+
+            setting.OsdEnable = new ComboBox();
+            setting.OsdEnable.Items.Add("Use");
+            setting.OsdEnable.Items.Add("Don't use");
+            setting.OsdEnable.SelectedIndex = 0;
+            root.Children.Add(LabeledControl("OSD:", setting.OsdEnable));
 
             tab.Content = root;
             setting.Tab = tab;
