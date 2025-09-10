@@ -40,7 +40,7 @@
                                 <ColumnDefinition Width="6*"/>
                             </Grid.ColumnDefinitions>
                             <Label Content="Server IP:" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="2"/>
-                            <TextBox Name="Textbox_serverIP" Grid.Column="1" />
+                            <TextBox Name="Textbox_serverIP" Text="192.168.10.252" Grid.Column="1" />
                         </Grid>
                         <Grid Height="30" >
                             <Grid.ColumnDefinitions>
