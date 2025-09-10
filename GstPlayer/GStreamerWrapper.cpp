@@ -83,7 +83,7 @@ namespace GStreamerWrapper {
             NULL);
 
         std::ostringstream caps_str;
-        caps_str << "video/x-raw,format=NV12,framerate=30/1";
+        caps_str << "video/x-raw(memory:D3D11Memory),format=NV12,framerate=30/1";
         GstCaps* caps = gst_caps_from_string(caps_str.str().c_str());
         g_object_set(capsfilter, "caps", caps, NULL);
         gst_caps_unref(caps);
