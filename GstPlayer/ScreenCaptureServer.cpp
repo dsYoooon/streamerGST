@@ -236,7 +236,10 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
         "framerate", GST_TYPE_FRACTION, fps, 1,
         NULL);
     GstCaps* h264_caps = gst_caps_new_simple("video/x-h264", NULL);
-    GstEncodingVideoProfile* vprof = gst_encoding_video_profile_new(h264_caps, restrict_caps, NULL, 0);
+    GstEncodingVideoProfile* vprof =
+        gst_encoding_video_profile_new(h264_caps, NULL, NULL, 0);
+    gst_encoding_profile_set_restriction(GST_ENCODING_PROFILE(vprof),
+        restrict_caps);
     gst_caps_unref(h264_caps);
     gst_caps_unref(restrict_caps);
     g_object_set(vencbin, "profile", vprof, NULL);
