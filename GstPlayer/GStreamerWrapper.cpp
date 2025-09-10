@@ -4,6 +4,9 @@
 
 #include <vector>
 #include <sstream>
+#include <msclr/marshal_cppstd.h>
+#include <gst/gstdevicemonitor.h>
+#include <gst/gstdevice.h>
 
 // 필요한 .NET 네임스페이스 추가
 using namespace System::Runtime::InteropServices; // GCHandle을 위해 추가
@@ -43,6 +46,29 @@ namespace GStreamerWrapper {
     {
         StopScreenCaptureRtspServer();
         gst_deinit();
+    }
+
+    array<String^>^ GstPlayer::GetAudioDevices()
+    {
+        std::vector<String^> devices;
+        GstDeviceMonitor* mon = gst_device_monitor_new();
+        GstCaps* caps = gst_caps_new_empty_simple("audio/x-raw");
+        gst_device_monitor_add_filter(mon, "Audio/Source", caps);
+        gst_caps_unref(caps);
+        gst_device_monitor_start(mon);
+        GList* devs = gst_device_monitor_get_devices(mon);
+        for (GList* l = devs; l; l = l->next) {
+            GstDevice* d = GST_DEVICE(l->data);
+            const gchar* name = gst_device_get_display_name(d);
+            if (name) devices.push_back(gcnew String(name));
+            gst_object_unref(d);
+        }
+        g_list_free(devs);
+        gst_device_monitor_stop(mon);
+        gst_object_unref(mon);
+        array<String^>^ arr = gcnew array<String^>((int)devices.size());
+        for (size_t i = 0; i < devices.size(); ++i) arr[i] = devices[i];
+        return arr;
     }
 
     GstPlayer::GstPlayer(IntPtr windowHandle) : pipeline(nullptr)
@@ -127,6 +153,10 @@ namespace GStreamerWrapper {
             ncfg.framerate = cfg.Framerate;
             ncfg.bitrate_kbps = cfg.BitrateKbps;
             ncfg.keyframe_interval = cfg.KeyframeInterval;
+            ncfg.enable_audio = cfg.EnableAudio;
+            if (cfg.AudioDevice != nullptr)
+                ncfg.audio_device = msclr::interop::marshal_as<std::string>(cfg.AudioDevice);
+            ncfg.enable_hw_accel = cfg.EnableHardwareAccel;
             nativeConfigs.push_back(ncfg);
         }
 

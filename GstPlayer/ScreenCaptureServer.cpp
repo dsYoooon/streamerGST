@@ -85,6 +85,8 @@ typedef struct _MyMediaFactory {
     int v_bitrate_kbps;
     int a_bitrate_bps;
     gboolean enable_audio;
+    gchar* audio_device;
+    gboolean use_hw_accel;
 
 #ifdef TextOveray
     // 텍스트 오버레이 상태 (오버레이가 켜진 빌드에서만 포함)
@@ -149,7 +151,8 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
 #endif
 
     GstElement* vq1 = gst_element_factory_make("queue", "vqueue1");
-    GstElement* venc = gst_element_factory_make("x264enc", "venc");
+    const char* enc_name = self->use_hw_accel ? "d3d11h264enc" : "x264enc";
+    GstElement* venc = gst_element_factory_make(enc_name, "venc");
     GstElement* vparse = gst_element_factory_make("h264parse", "vparse");
     GstElement* vcf = gst_element_factory_make("capsfilter", "vpaycaps");
     GstElement* vq2 = gst_element_factory_make("queue", "vqueue2");
@@ -228,32 +231,36 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
     static const char* kH264Profile = "high";
     static const char* kH264Level = "5";
 
-    g_object_set(venc,
-        "bitrate", v_kbps,
-        "key-int-max", fps,
-        "b-adapt", 0,
-        "bframes", 0,
-        "ref", 1,
-        "byte-stream", TRUE,
-        "speed-preset", 1,
-        "tune", 0x04,
-        NULL);
+    if (self->use_hw_accel) {
+        g_object_set(venc, "bitrate", v_kbps, NULL);
+    } else {
+        g_object_set(venc,
+            "bitrate", v_kbps,
+            "key-int-max", fps,
+            "b-adapt", 0,
+            "bframes", 0,
+            "ref", 1,
+            "byte-stream", TRUE,
+            "speed-preset", 1,
+            "tune", 0x04,
+            NULL);
 
-    {
-        std::ostringstream opt;
-        opt << "level=" << kH264Level << ":vbv-maxrate=" << v_kbps << ":vbv-bufsize=" << (v_kbps * 2);
-        g_object_set(venc, "option-string", opt.str().c_str(), NULL);
-        g_object_set(venc, "nal-hrd", 2, "vbv-buf-capacity", 1000, NULL);
-    }
+        {
+            std::ostringstream opt;
+            opt << "level=" << kH264Level << ":vbv-maxrate=" << v_kbps << ":vbv-bufsize=" << (v_kbps * 2);
+            g_object_set(venc, "option-string", opt.str().c_str(), NULL);
+            g_object_set(venc, "nal-hrd", 2, "vbv-buf-capacity", 1000, NULL);
+        }
 
-    if (!strcmp(kH264Profile, "baseline") || !strcmp(kH264Profile, "constrained-baseline")) {
-        g_object_set(venc, "cabac", FALSE, "dct8x8", FALSE, "bframes", 0, "ref", 1, NULL);
-    }
-    else if (!strcmp(kH264Profile, "main")) {
-        g_object_set(venc, "cabac", TRUE, "dct8x8", FALSE, NULL);
-    }
-    else if (!strcmp(kH264Profile, "high")) {
-        g_object_set(venc, "cabac", TRUE, "dct8x8", TRUE, NULL);
+        if (!strcmp(kH264Profile, "baseline") || !strcmp(kH264Profile, "constrained-baseline")) {
+            g_object_set(venc, "cabac", FALSE, "dct8x8", FALSE, "bframes", 0, "ref", 1, NULL);
+        }
+        else if (!strcmp(kH264Profile, "main")) {
+            g_object_set(venc, "cabac", TRUE, "dct8x8", FALSE, NULL);
+        }
+        else if (!strcmp(kH264Profile, "high")) {
+            g_object_set(venc, "cabac", TRUE, "dct8x8", TRUE, NULL);
+        }
     }
 
     {
@@ -293,6 +300,8 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
             gst_bin_add_many(GST_BIN(bin), asrc, aq1, aconv, ares, acapsf, arate, aq2, aenc, apay, NULL);
 
             g_object_set(asrc, "loopback", TRUE, "do-timestamp", TRUE, NULL);
+            if (self->audio_device)
+                g_object_set(asrc, "device-name", self->audio_device, NULL);
             g_object_set(aq1, "leaky", 2, "max-size-buffers", 2, "max-size-bytes", 0, "max-size-time", (gint64)200000000, NULL);
             g_object_set(aq2, "leaky", 2, "max-size-buffers", 2, "max-size-bytes", 0, "max-size-time", (gint64)200000000, NULL);
 
@@ -329,6 +338,10 @@ static void my_media_factory_finalize(GObject * object) {
         self->overlay_text = NULL;
     }
 #endif
+    if (self->audio_device) {
+        g_free(self->audio_device);
+        self->audio_device = NULL;
+    }
     G_OBJECT_CLASS(my_media_factory_parent_class)->finalize(object);
 }
 
@@ -348,12 +361,12 @@ static void my_media_factory_init(MyMediaFactory * self) {
     self->crop_y = 0;
     self->crop_w = 0;
     self->crop_h = 0;
+    self->audio_device = NULL;
+    self->use_hw_accel = FALSE;
 }
 
 static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative& cfg,
                                                       int stream_index) {
-    const bool ENABLE_AUDIO = true;
-
     MyMediaFactory* f = (MyMediaFactory*)g_object_new(my_media_factory_get_type(), NULL);
     f->monitor_index = cfg.monitor_index;
     f->crop_x = cfg.crop_x;
@@ -365,7 +378,10 @@ static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative&
     f->fps = cfg.framerate > 0 ? cfg.framerate : 30;
     f->v_bitrate_kbps = cfg.bitrate_kbps > 0 ? cfg.bitrate_kbps : 8000;
     f->a_bitrate_bps = 128000;
-    f->enable_audio = ENABLE_AUDIO;
+    f->enable_audio = cfg.enable_audio;
+    if (!cfg.audio_device.empty())
+        f->audio_device = g_strdup(cfg.audio_device.c_str());
+    f->use_hw_accel = cfg.enable_hw_accel;
 
 #ifdef TextOveray
     if (f->overlay_text) g_free(f->overlay_text);
