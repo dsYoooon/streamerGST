@@ -156,6 +156,7 @@ namespace GStreamerWrapper {
             if (cfg.AudioDevice != nullptr)
                 ncfg.audio_device = msclr::interop::marshal_as<std::string>(cfg.AudioDevice);
             ncfg.enable_hw_accel = cfg.EnableHardwareAccel;
+            ncfg.enable_osd = cfg.EnableOsd;
             nativeConfigs.push_back(ncfg);
         }
 

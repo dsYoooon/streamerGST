@@ -21,6 +21,7 @@ struct StreamConfigNative {
     bool enable_audio;
     std::string audio_device;
     bool enable_hw_accel;
+    bool enable_osd;
 };
 
 // Starts the RTSP screen capture server on a background thread hosting
