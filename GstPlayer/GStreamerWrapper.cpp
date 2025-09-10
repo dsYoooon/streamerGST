@@ -11,6 +11,7 @@
 // 필요한 .NET 네임스페이스 추가
 using namespace System::Runtime::InteropServices; // GCHandle을 위해 추가
 using namespace System::Diagnostics;             // Debug 클래스를 위해 추가
+using namespace System::Collections::Generic;
 
 #pragma comment(lib, "gstreamer-1.0.lib")
 #pragma comment(lib, "gstvideo-1.0.lib")
@@ -50,7 +51,7 @@ namespace GStreamerWrapper {
 
     array<String^>^ GstPlayer::GetAudioDevices()
     {
-        std::vector<String^> devices;
+        List<String^>^ devices = gcnew List<String^>();
         GstDeviceMonitor* mon = gst_device_monitor_new();
         GstCaps* caps = gst_caps_new_empty_simple("audio/x-raw");
         gst_device_monitor_add_filter(mon, "Audio/Source", caps);
@@ -60,15 +61,13 @@ namespace GStreamerWrapper {
         for (GList* l = devs; l; l = l->next) {
             GstDevice* d = GST_DEVICE(l->data);
             const gchar* name = gst_device_get_display_name(d);
-            if (name) devices.push_back(gcnew String(name));
+            if (name) devices->Add(gcnew String(name));
             gst_object_unref(d);
         }
         g_list_free(devs);
         gst_device_monitor_stop(mon);
         gst_object_unref(mon);
-        array<String^>^ arr = gcnew array<String^>((int)devices.size());
-        for (size_t i = 0; i < devices.size(); ++i) arr[i] = devices[i];
-        return arr;
+        return devices->ToArray();
     }
 
     GstPlayer::GstPlayer(IntPtr windowHandle) : pipeline(nullptr)
