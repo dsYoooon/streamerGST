@@ -1,5 +1,3 @@
-#define TextOveray 1
-
 #include <gst/gst.h>
 #include <gst/rtsp-server/rtsp-server.h>
 #include <string>
@@ -157,11 +155,9 @@ typedef struct _MyMediaFactory {
     gchar* audio_device;
     gboolean use_hw_accel;
 
-#ifdef TextOveray
-    // 텍스트 오버레이 상태 (오버레이가 켜진 빌드에서만 포함)
+    // 텍스트 오버레이 상태
     gchar* overlay_text;
     GstElement* overlay_elem;  // weak
-#endif
 } MyMediaFactory;
 
 typedef struct _MyMediaFactoryClass {
@@ -211,9 +207,7 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
     // ---- 비디오 ----
     GstElement* vsrc = gst_element_factory_make("d3d11screencapturesrc", NULL);
     GstElement* vd3d = gst_element_factory_make("d3d11convert", "vd3d11conv");
-#ifdef TextOveray
     GstElement* tover = gst_element_factory_make("dwritetextoverlay", "overlay");
-#endif
     GstElement* vd3d2 = gst_element_factory_make("d3d11convert", "vd3d11conv2");
     GstElement* vdown = NULL; // CPU path when using non-D3D11 encoder
     GstElement* vq1 = gst_element_factory_make("queue", "vqueue1");
@@ -247,27 +241,16 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
     GstElement* vq2 = gst_element_factory_make("queue", "vqueue2");
     GstElement* vpay = gst_element_factory_make("rtph264pay", "pay0");
 
-#ifndef TextOveray
-    if (!vsrc || !vd3d || !vd3d2 || (!use_d3d11_encoder && !vdown) || !vq1 || !venc || !vparse || !vcf || !vq2 || !vpay) {
-#else
     if (!vsrc || !vd3d || !tover || !vd3d2 || (!use_d3d11_encoder && !vdown) || !vq1 || !venc || !vparse || !vcf || !vq2 || !vpay) {
-#endif
         g_printerr("비디오 요소 생성 실패\n");
         if (bin) gst_object_unref(bin);
         return NULL;
     }
 
-#ifndef TextOveray
-    if (use_d3d11_encoder)
-        gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vd3d2, vq1, venc, vparse, vcf, vq2, vpay, NULL);
-    else
-        gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vd3d2, vdown, vq1, venc, vparse, vcf, vq2, vpay, NULL);
-#else
     if (use_d3d11_encoder)
         gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vq1, venc, vparse, vcf, vq2, vpay, NULL);
     else
         gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vdown, vq1, venc, vparse, vcf, vq2, vpay, NULL);
-#endif
 
     g_object_set(vsrc,
         "monitor-index", monitor_index,
@@ -287,7 +270,6 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
         if (!link_ok(vsrc, vd3d, caps_from(css_gpu_rgba.str()))) return bin;
     }
 
-#ifdef TextOveray
     // 텍스트 오버레이
     {
         const gchar* txt = (self->overlay_text && *self->overlay_text) ? self->overlay_text : "";
@@ -306,9 +288,6 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
 
     if (!link_ok(vd3d, tover)) return bin;
     if (!link_ok(tover, vd3d2)) return bin;
-#else
-    if (!link_ok(vd3d, vd3d2)) return bin;
-#endif
 
     {
         std::ostringstream css_gpu_nv12;
@@ -412,7 +391,6 @@ static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory,
 
 static void my_media_factory_finalize(GObject * object) {
     MyMediaFactory* self = (MyMediaFactory*)object;
-#ifdef TextOveray
     if (self->overlay_elem) {
         g_object_remove_weak_pointer(G_OBJECT(self->overlay_elem), (gpointer*)&self->overlay_elem);
         self->overlay_elem = NULL;
@@ -421,7 +399,6 @@ static void my_media_factory_finalize(GObject * object) {
         g_free(self->overlay_text);
         self->overlay_text = NULL;
     }
-#endif
     if (self->audio_device) {
         g_free(self->audio_device);
         self->audio_device = NULL;
@@ -437,10 +414,8 @@ static void my_media_factory_class_init(MyMediaFactoryClass * klass) {
     gklass->finalize = my_media_factory_finalize;
 }
 static void my_media_factory_init(MyMediaFactory * self) {
-#ifdef TextOveray
     self->overlay_text = g_strdup("");
     self->overlay_elem = NULL;
-#endif
     self->crop_x = 0;
     self->crop_y = 0;
     self->crop_w = 0;
@@ -467,14 +442,11 @@ static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative&
     if (!cfg.audio_device.empty())
         f->audio_device = g_strdup(cfg.audio_device.c_str());
     f->use_hw_accel = cfg.enable_hw_accel;
-	f->keyint = cfg.keyframe_interval > 0 ? cfg.keyframe_interval : f->fps; // [ADD]
+    f->keyint = cfg.keyframe_interval > 0 ? cfg.keyframe_interval : f->fps; // [ADD]
 
-
-#ifdef TextOveray
     if (f->overlay_text) g_free(f->overlay_text);
     std::ostringstream def; def << "Screen " << stream_index;
     f->overlay_text = g_strdup(def.str().c_str());
-#endif
 
     gst_rtsp_media_factory_set_shared(GST_RTSP_MEDIA_FACTORY(f), TRUE);
     gst_rtsp_media_factory_set_suspend_mode(GST_RTSP_MEDIA_FACTORY(f), GST_RTSP_SUSPEND_MODE_NONE);
@@ -505,15 +477,11 @@ static void SetOverlayText(RtspServerContext * ctx, int screen_index, const char
     MyMediaFactory* f = (MyMediaFactory*)ctx->factories[screen_index];
     if (!f) return;
 
-#ifdef TextOveray
     if (f->overlay_text) g_free(f->overlay_text);
     f->overlay_text = g_strdup(text ? text : "");
     if (f->overlay_elem) {
         g_object_set(f->overlay_elem, "text", f->overlay_text, NULL);
     }
-#else
-    (void)text;
-#endif
 }
 
 static void initialize_gstreamer(int* argc, char*** argv, RtspServerContext * ctx) {
