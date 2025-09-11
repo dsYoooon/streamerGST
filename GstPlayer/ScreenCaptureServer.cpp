@@ -112,6 +112,8 @@ namespace GStreamerWrapper {
         gchar* audio_device;
         gboolean enable_hw_accel; // ★ 옵션 반영
         gboolean enable_osd;
+        gchar* bitrate_control;
+        gchar* profile;
 
         // overlay
         gchar* overlay_text;
@@ -142,6 +144,8 @@ namespace GStreamerWrapper {
         set_int_if(elem, "bitrate", mf->v_bitrate_kbps * 1000);
         set_int_if(elem, "key-int-max", mf->keyint);
         set_int_if(elem, "gop-size", mf->keyint);
+        set_str_if(elem, "profile", mf->profile);
+        const gchar* rc = mf->bitrate_control ? mf->bitrate_control : "CBR";
 
         if (g_strcmp0(fname, "x264enc") == 0) {
             set_int_if(elem, "speed-preset", 1 /*ultrafast*/);
@@ -152,23 +156,24 @@ namespace GStreamerWrapper {
         }
         else if (g_strcmp0(fname, "qsvh264enc") == 0) {
             set_bool_if(elem, "lowpower", TRUE);
-            set_int_if(elem, "rate-control", 1 /*CBR*/);
+            set_int_if(elem, "rate-control", g_strcmp0(rc, "VBR") == 0 ? 0 : 1);
             set_int_if(elem, "target-usage", 3);
             set_int_if(elem, "gop-ref-dist", 1);
         }
         else if (g_strcmp0(fname, "nvh264enc") == 0) {
             set_str_if(elem, "preset", "llhq");
-            set_str_if(elem, "rc-mode", "cbr");
+            set_str_if(elem, "rc-mode", g_strcmp0(rc, "VBR") == 0 ? "vbr" : "cbr");
             set_int_if(elem, "rc-lookahead", 0);
             set_int_if(elem, "b-frames", 0);
         }
         else if (g_strcmp0(fname, "amfenc_h264") == 0) {
             set_str_if(elem, "usage", "ultra-low-latency"); // 없으면 무시됨
-            set_int_if(elem, "rate-control", 1 /*CBR*/);
+            set_int_if(elem, "rate-control", g_strcmp0(rc, "VBR") == 0 ? 0 : 1);
             set_int_if(elem, "b-frames", 0);
         }
         else if (g_strcmp0(fname, "d3d11h264enc") == 0) {
             set_int_if(elem, "b-frames", 0);
+            set_str_if(elem, "rate-control", g_strcmp0(rc, "VBR") == 0 ? "vbr" : "cbr");
         }
     }
 
@@ -286,7 +291,9 @@ namespace GStreamerWrapper {
         // HW 가속이면: encodebin에 D3D11Memory NV12를 제한으로 주고 제로카피 우선 시도
         if (self->enable_hw_accel) {
             // encodebin profile + restriction (D3D11 NV12)
-            GstCaps* h264_caps = gst_caps_from_string("video/x-h264,profile=high");
+            std::ostringstream pcaps;
+            pcaps << "video/x-h264,profile=" << (self->profile ? self->profile : "high");
+            GstCaps* h264_caps = gst_caps_from_string(pcaps.str().c_str());
             GstCaps* restr = gst_caps_copy(gpu_nv12_caps); // NV12 + D3D11Memory
             GstEncodingProfile* vprof = (GstEncodingProfile*)
                 gst_encoding_video_profile_new(h264_caps, NULL, restr, 1);
@@ -339,6 +346,7 @@ namespace GStreamerWrapper {
                     "tune", 0x00000004 /*zerolatency*/,
                     "byte-stream", TRUE,
                     NULL);
+                set_str_if(venc, "profile", self->profile);
                 if (!gst_element_link(vq1, venc)) { gst_object_unref(bin); return NULL; }
             }
         }
@@ -361,8 +369,10 @@ namespace GStreamerWrapper {
 
         // 3) RTP MTU 상향 (패킷 수 감소)
         {
-            GstCaps* paycaps = gst_caps_from_string(
-                "video/x-h264,stream-format=byte-stream,alignment=au,profile=(string)high");
+            std::ostringstream paystr;
+            paystr << "video/x-h264,stream-format=byte-stream,alignment=au,profile=(string)"
+                   << (self->profile ? self->profile : "high");
+            GstCaps* paycaps = gst_caps_from_string(paystr.str().c_str());
             g_object_set(vcf, "caps", paycaps, NULL);
             gst_caps_unref(paycaps);
         }
@@ -438,6 +448,8 @@ namespace GStreamerWrapper {
         }
         if (self->overlay_text) { g_free(self->overlay_text); self->overlay_text = NULL; }
         if (self->audio_device) { g_free(self->audio_device); self->audio_device = NULL; }
+        if (self->bitrate_control) { g_free(self->bitrate_control); self->bitrate_control = NULL; }
+        if (self->profile) { g_free(self->profile); self->profile = NULL; }
         G_OBJECT_CLASS(my_media_factory_parent_class)->finalize(object);
     }
     static void my_media_factory_class_init(MyMediaFactoryClass* klass) {
@@ -454,6 +466,8 @@ namespace GStreamerWrapper {
         self->enable_hw_accel = TRUE; // 기본값 (구조체에서 덮임)
         self->enable_osd = TRUE;
         self->keyint = 0;
+        self->bitrate_control = g_strdup("CBR");
+        self->profile = g_strdup("high");
     }
 
     /* ---------- factory build / server ---------- */
@@ -472,6 +486,10 @@ namespace GStreamerWrapper {
         f->enable_hw_accel = cfg.enable_hw_accel;               // ★ 구조체 옵션 반영
         f->enable_osd = cfg.enable_osd;
         f->keyint = cfg.keyframe_interval > 0 ? cfg.keyframe_interval : f->fps;
+        if (f->bitrate_control) g_free(f->bitrate_control);
+        f->bitrate_control = g_strdup(cfg.bitrate_control.empty() ? "CBR" : cfg.bitrate_control.c_str());
+        if (f->profile) g_free(f->profile);
+        f->profile = g_strdup(cfg.profile.empty() ? "high" : cfg.profile.c_str());
 
         if (f->overlay_text) g_free(f->overlay_text);
         std::ostringstream def; def << "Screen " << stream_index;

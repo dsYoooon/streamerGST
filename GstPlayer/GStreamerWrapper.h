@@ -25,6 +25,8 @@ namespace GStreamerWrapper {
         String^ AudioDevice;
         bool EnableHardwareAccel;
         bool EnableOsd;
+        String^ BitrateControl;
+        String^ Profile;
     };
 
     public ref class GstPlayer

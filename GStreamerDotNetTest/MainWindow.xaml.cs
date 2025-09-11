@@ -117,6 +117,8 @@ namespace GStreamerDotNetTest
                     int.TryParse(s.FrameRate.Text, out cfg.Framerate);
                     int.TryParse(s.Bitrate.Text, out cfg.BitrateKbps);
                     int.TryParse(s.Keyframe.Text, out cfg.KeyframeInterval);
+                    cfg.BitrateControl = s.BitrateControl.SelectedItem as string;
+                    cfg.Profile = s.Profile.SelectedItem as string;
                     cfg.EnableAudio = s.AudioEnable.SelectedIndex == 0;
                     cfg.AudioDevice = s.AudioDevice.SelectedItem as string;
                     cfg.EnableHardwareAccel = s.HwAccel.SelectedIndex == 0;
