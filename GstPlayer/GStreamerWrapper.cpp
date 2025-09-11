@@ -157,6 +157,10 @@ namespace GStreamerWrapper {
                 ncfg.audio_device = msclr::interop::marshal_as<std::string>(cfg.AudioDevice);
             ncfg.enable_hw_accel = cfg.EnableHardwareAccel;
             ncfg.enable_osd = cfg.EnableOsd;
+            if (cfg.Profile != nullptr)
+                ncfg.profile = msclr::interop::marshal_as<std::string>(cfg.Profile);
+            if (cfg.BitrateControl != nullptr)
+                ncfg.bitrate_control = msclr::interop::marshal_as<std::string>(cfg.BitrateControl);
             nativeConfigs.push_back(ncfg);
         }
 
