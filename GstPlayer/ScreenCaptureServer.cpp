@@ -1,4 +1,4 @@
-// ScreenCaptureServer.cpp (encodebin + per-option HW accel on/off, multi-vendor stable)
+﻿// ScreenCaptureServer.cpp (encodebin + per-option HW accel on/off, multi-vendor stable)
 
 #include <gst/gst.h>
 #include <gst/rtsp-server/rtsp-server.h>
@@ -193,7 +193,7 @@ namespace GStreamerWrapper {
     /* ---------- create pipeline ---------- */
     static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory, const GstRTSPUrl*) {
         MyMediaFactory* self = (MyMediaFactory*)factory;
-        gst_debug_set_default_threshold(GST_LEVEL_INFO);
+        //gst_debug_set_default_threshold(GST_LEVEL_INFO);
 
         const gint monitor_index = self->monitor_index;
         const gint crop_x = self->crop_x, crop_y = self->crop_y, crop_w = self->crop_w, crop_h = self->crop_h;
@@ -212,25 +212,32 @@ namespace GStreamerWrapper {
         GstElement* vd3d = gst_element_factory_make("d3d11convert", "vd3d11conv");
         GstElement* tover = self->enable_osd ? gst_element_factory_make("dwritetextoverlay", "overlay") : NULL;
         GstElement* vd3d2 = gst_element_factory_make("d3d11convert", "vd3d11conv2");
+
+        // 폴백용(CPU 경로)
         GstElement* vdown = gst_element_factory_make("d3d11download", "vdown");
         GstElement* vconv = gst_element_factory_make("videoconvert", "vconv");
+
         GstElement* vq1 = gst_element_factory_make("queue", "vqueue1");
 
+        // 인코더: HW on → encodebin, HW off → x264enc
         GstElement* venc = self->enable_hw_accel ?
             gst_element_factory_make("encodebin", "vencbin") :
             gst_element_factory_make("x264enc", "venc");
+
         GstElement* vparse = gst_element_factory_make("h264parse", "vparse");
         GstElement* vcf = gst_element_factory_make("capsfilter", "vpaycaps");
         GstElement* vq2 = gst_element_factory_make("queue", "vqueue2");
         GstElement* vpay = gst_element_factory_make("rtph264pay", "pay0");
 
-        if (!vsrc || !vd3d || !vd3d2 || !vdown || !vconv || !vq1 ||
-            !venc || !vparse || !vcf || !vq2 || !vpay ||
-            (self->enable_osd && !tover)) {
+        if (!vsrc || !vd3d || !vd3d2 || !vq1 || !venc || !vparse || !vcf || !vq2 || !vpay ||
+            (self->enable_osd && !tover) ||
+            (!self->enable_hw_accel && (!vdown || !vconv))   // SW 경로에선 필요
+            ) {
             g_printerr("비디오 요소 생성 실패\n");
             if (bin) gst_object_unref(bin);
             return NULL;
         }
+
         if (self->enable_osd)
             gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
         else
@@ -251,6 +258,7 @@ namespace GStreamerWrapper {
         }
 
         // 2) 텍스트 오버레이 (옵션)
+        GstElement* prev = vd3d;
         if (self->enable_osd) {
             const gchar* txt = (self->overlay_text && *self->overlay_text) ? self->overlay_text : "";
             g_object_set(tover, "text", txt, "font-desc", "Segoe UI 11",
@@ -260,49 +268,82 @@ namespace GStreamerWrapper {
             self->overlay_elem = tover;
             g_object_add_weak_pointer(G_OBJECT(tover), (gpointer*)&self->overlay_elem);
             if (!link_ok(vd3d, tover)) { gst_object_unref(bin); return NULL; }
+            prev = tover;
         }
 
-        // 3) GPU NV12
-        {
-            std::ostringstream css;
-            css << "video/x-raw(memory:D3D11Memory),format=NV12,"
-                << "width=" << out_w << ",height=" << out_h
-                << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
-            GstElement* prev = self->enable_osd ? tover : vd3d;
-            if (!link_ok(prev, vd3d2)) { gst_object_unref(bin); return NULL; }
-            if (!link_ok(vd3d2, vdown, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
-        }
+        // 3) GPU NV12 (D3D11Memory)
+        if (!link_ok(prev, vd3d2)) { gst_object_unref(bin); return NULL; }
+        // 제로카피를 위한 D3D11Memory NV12 caps
+        GstCaps* gpu_nv12_caps = gst_caps_new_simple("video/x-raw",
+            "format", G_TYPE_STRING, "NV12",
+            "width", G_TYPE_INT, out_w,
+            "height", G_TYPE_INT, out_h,
+            "framerate", GST_TYPE_FRACTION, fps, 1,
+            "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, NULL);
+        GstCapsFeatures* d3d11_feat = gst_caps_features_new("memory:D3D11Memory", NULL);
+        gst_caps_set_features(gpu_nv12_caps, 0, d3d11_feat);
 
-        // 4) GPU→CPU 다운로드 이후, CPU NV12로 정규화 (encodebin 입력 통일)
-        {
-            std::ostringstream css;
-            css << "video/x-raw,format=NV12,"
-                << "width=" << out_w << ",height=" << out_h
-                << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
-            if (!link_ok(vdown, vconv)) { gst_object_unref(bin); return NULL; }
-            if (!link_ok(vconv, vq1, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
-        }
+        gboolean zero_copy_ok = FALSE;
 
-        // 5) 인코더 설정
+        // 4) 인코더 설정 (+ HW일 때 restriction을 D3D11Memory로 줘서 제로카피 유도)
         if (self->enable_hw_accel) {
+            // encodebin profile + restriction (D3D11 NV12)
             GstCaps* h264_caps = gst_caps_from_string("video/x-h264,profile=high");
+            GstCaps* restr = gst_caps_copy(gpu_nv12_caps); // NV12 + D3D11Memory
             GstEncodingProfile* vprof = (GstEncodingProfile*)
-                gst_encoding_video_profile_new(h264_caps, /*preset*/NULL, /*restriction*/NULL, /*presence*/1);
-            gst_caps_unref(h264_caps);
+                gst_encoding_video_profile_new(h264_caps, NULL, restr, 1);
             g_object_set(venc, "profile", vprof, NULL);
             gst_encoding_profile_unref(vprof);
-
-            // 어떤 인코더가 선택되든, 위 콜백에서 옵션 기반 튜닝
+            gst_caps_unref(h264_caps);
+            // element-added 튜닝 콜백
             g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
-        } else {
-            g_object_set(venc,
-                "bitrate", self->v_bitrate_kbps,
-                "key-int-max", keyint,
-                "gop-size", keyint,
-                "speed-preset", 1 /*ultrafast*/,
-                "tune", 0x00000004 /*zerolatency*/,
-                "byte-stream", TRUE,
-                NULL);
+
+            // ★ 제로카피 경로 먼저 시도: vd3d2 -> vq1 (D3D11 NV12) -> encodebin
+            if (gst_element_link_filtered(vd3d2, vq1, gst_caps_ref(gpu_nv12_caps)) &&
+                gst_element_link(vq1, venc)) {
+                zero_copy_ok = TRUE;
+                g_print("[video] Zero-copy D3D11Memory→encodebin 활성화\n");
+            }
+            else {
+                g_print("[video] Zero-copy 링크 실패 → CPU 폴백으로 전환\n");
+            }
+        }
+
+        // 5) CPU 폴백 경로 (HW off 이거나 zero-copy 실패 시)
+        if (!self->enable_hw_accel || !zero_copy_ok) {
+            // vd3d2 → vdown (GPU NV12 그대로) → vconv → vq1 (CPU NV12) → 인코더
+            {
+                std::ostringstream gpu_css;
+                gpu_css << "video/x-raw(memory:D3D11Memory),format=NV12,"
+                    << "width=" << out_w << ",height=" << out_h
+                    << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
+                if (!link_ok(vd3d2, vdown, gst_caps_from_string(gpu_css.str().c_str()))) { gst_object_unref(bin); return NULL; }
+            }
+            {
+                std::ostringstream cpu_css;
+                cpu_css << "video/x-raw,format=NV12,"
+                    << "width=" << out_w << ",height=" << out_h
+                    << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
+                if (!link_ok(vdown, vconv)) { gst_object_unref(bin); return NULL; }
+                if (!link_ok(vconv, vq1, gst_caps_from_string(cpu_css.str().c_str()))) { gst_object_unref(bin); return NULL; }
+            }
+
+            if (self->enable_hw_accel) {
+                // encodebin은 profile은 이미 설정됨. vq1 → venc 링크만 하면 됨.
+                if (!gst_element_link(vq1, venc)) { gst_object_unref(bin); return NULL; }
+            }
+            else {
+                // 소프트웨어 x264enc 세팅
+                g_object_set(venc,
+                    "bitrate", self->v_bitrate_kbps,
+                    "key-int-max", keyint,
+                    "gop-size", keyint,
+                    "speed-preset", 1 /*ultrafast*/,
+                    "tune", 0x00000004 /*zerolatency*/,
+                    "byte-stream", TRUE,
+                    NULL);
+                if (!gst_element_link(vq1, venc)) { gst_object_unref(bin); return NULL; }
+            }
         }
 
         // 6) parse → caps → queue → pay
@@ -318,7 +359,6 @@ namespace GStreamerWrapper {
         g_object_set(vq2, "leaky", 2, "max-size-buffers", 2, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
         g_object_set(vpay, "pt", 96, "config-interval", 1, "mtu", 1200, NULL);
 
-        if (!gst_element_link(vq1, venc)) { gst_object_unref(bin); return NULL; }
         if (!link_ok(venc, vparse)) { gst_object_unref(bin); return NULL; }
         if (!link_ok(vparse, vcf)) { gst_object_unref(bin); return NULL; }
         if (!link_ok(vcf, vq2)) { gst_object_unref(bin); return NULL; }
@@ -326,7 +366,8 @@ namespace GStreamerWrapper {
 
         /* --- 오디오 (끊김 해결 튜닝 반영) --- */
         if (self->enable_audio) {
-            GstElement* asrc = gst_element_factory_make("wasapisrc", "asrc");
+            GstElement* asrc = gst_element_factory_make("wasapi2src", "asrc");
+            if (!asrc) asrc = gst_element_factory_make("wasapisrc", "asrc"); // 폴백
             GstElement* aq1 = gst_element_factory_make("queue", "aqueue1");
             GstElement* aconv = gst_element_factory_make("audioconvert", NULL);
             GstElement* ares = gst_element_factory_make("audioresample", NULL);
@@ -341,9 +382,13 @@ namespace GStreamerWrapper {
             else {
                 gst_bin_add_many(GST_BIN(bin), asrc, aq1, aconv, ares, acaps, aq2, aenc, apay, NULL);
 
-                g_object_set(asrc, "loopback", TRUE, "do-timestamp", TRUE, NULL);
+                g_object_set(asrc,
+                    "loopback", TRUE,
+                    "do-timestamp", TRUE,
+                    "loopback-silence-on-device-mute", TRUE,
+                    NULL);
 
-                // 큐 버퍼(끊김 방지): non-leaky + 충분한 시간 버퍼(원하는 값으로 조정 가능)
+                // 큐 버퍼(끊김 방지): non-leaky + 충분한 시간 버퍼
                 g_object_set(aq1, "leaky", 0, "max-size-buffers", 0, "max-size-bytes", 0,
                     "max-size-time", (gint64)500000000, NULL);
                 g_object_set(aq2, "leaky", 0, "max-size-buffers", 0, "max-size-bytes", 0,
@@ -370,8 +415,11 @@ namespace GStreamerWrapper {
             }
         }
 
+        // 정리
+        if (gpu_nv12_caps) gst_caps_unref(gpu_nv12_caps);
         return bin;
     }
+
 
     /* ---------- finalize ---------- */
     static void my_media_factory_finalize(GObject* object) {

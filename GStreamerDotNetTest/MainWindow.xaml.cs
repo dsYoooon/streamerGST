@@ -171,7 +171,7 @@ namespace GStreamerDotNetTest
                         Width = width,
                         Height = height,
                         Framerate = 30,
-                        BitrateKbps = 6000,
+                        BitrateKbps = 4000,
                         KeyframeInterval = 1
                     };
                     _player?.StartScreenCapture(cfg);
