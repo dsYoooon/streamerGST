@@ -191,9 +191,9 @@ namespace GStreamerWrapper {
     }
 
     /* ---------- create pipeline ---------- */
+/* ---------- create pipeline ---------- */
     static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory, const GstRTSPUrl*) {
         MyMediaFactory* self = (MyMediaFactory*)factory;
-        //gst_debug_set_default_threshold(GST_LEVEL_INFO);
 
         const gint monitor_index = self->monitor_index;
         const gint crop_x = self->crop_x, crop_y = self->crop_y, crop_w = self->crop_w, crop_h = self->crop_h;
@@ -209,9 +209,9 @@ namespace GStreamerWrapper {
 
         /* --- 비디오 소스 & 전처리 (D3D11 경로) --- */
         GstElement* vsrc = gst_element_factory_make("d3d11screencapturesrc", NULL);
-        GstElement* vd3d = gst_element_factory_make("d3d11convert", "vd3d11conv");
+        GstElement* vd3d = self->enable_osd ? gst_element_factory_make("d3d11convert", "vd3d11conv") : NULL; // OSD OFF면 제거
         GstElement* tover = self->enable_osd ? gst_element_factory_make("dwritetextoverlay", "overlay") : NULL;
-        GstElement* vd3d2 = gst_element_factory_make("d3d11convert", "vd3d11conv2");
+        GstElement* vd3d2 = gst_element_factory_make("d3d11convert", "vd3d11conv2"); // NV12 변환 담당 (단 1회)
 
         // 폴백용(CPU 경로)
         GstElement* vdown = gst_element_factory_make("d3d11download", "vdown");
@@ -229,10 +229,8 @@ namespace GStreamerWrapper {
         GstElement* vq2 = gst_element_factory_make("queue", "vqueue2");
         GstElement* vpay = gst_element_factory_make("rtph264pay", "pay0");
 
-        if (!vsrc || !vd3d || !vd3d2 || !vq1 || !venc || !vparse || !vcf || !vq2 || !vpay ||
-            (self->enable_osd && !tover) ||
-            (!self->enable_hw_accel && (!vdown || !vconv))   // SW 경로에선 필요
-            ) {
+        if (!vsrc || !vd3d2 || !vdown || !vconv || !vq1 || !venc || !vparse || !vcf || !vq2 || !vpay ||
+            (self->enable_osd && (!vd3d || !tover))) {
             g_printerr("비디오 요소 생성 실패\n");
             if (bin) gst_object_unref(bin);
             return NULL;
@@ -241,51 +239,51 @@ namespace GStreamerWrapper {
         if (self->enable_osd)
             gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
         else
-            gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
+            gst_bin_add_many(GST_BIN(bin), vsrc,        /*vd3d X*/ /*tover X*/ vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
 
         // 캡처 기본 설정
         g_object_set(vsrc,
             "monitor-index", monitor_index, "show-cursor", TRUE,
             "crop-x", crop_x, "crop-y", crop_y, "crop-width", crop_w, "crop-height", crop_h, NULL);
 
-        // 1) GPU BGRA at out size/fps
-        {
-            std::ostringstream css;
-            css << "video/x-raw(memory:D3D11Memory),format=BGRA,"
-                << "width=" << out_w << ",height=" << out_h
-                << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
-            if (!link_ok(vsrc, vd3d, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
-        }
-
-        // 2) 텍스트 오버레이 (옵션)
-        GstElement* prev = vd3d;
+        // 1) OSD OFF면 첫 변환(d3d11convert) 제거 → vsrc에서 바로 NV12로
+        GstElement* prev = vsrc;
         if (self->enable_osd) {
+            // vsrc → (BGRA) vd3d → tover
+            {
+                std::ostringstream css;
+                css << "video/x-raw(memory:D3D11Memory),format=BGRA,"
+                    << "width=" << out_w << ",height=" << out_h
+                    << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
+                if (!link_ok(vsrc, vd3d, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
+            }
             const gchar* txt = (self->overlay_text && *self->overlay_text) ? self->overlay_text : "";
             g_object_set(tover, "text", txt, "font-desc", "Segoe UI 11",
-                "halignment", 0, "valignment", 2,
-                "xpad", 8, "ypad", 8,
+                "halignment", 0, "valignment", 2, "xpad", 8, "ypad", 8,
                 "shaded-background", TRUE, "draw-shadow", TRUE, NULL);
             self->overlay_elem = tover;
             g_object_add_weak_pointer(G_OBJECT(tover), (gpointer*)&self->overlay_elem);
             if (!link_ok(vd3d, tover)) { gst_object_unref(bin); return NULL; }
-            prev = tover;
+            prev = tover; // OSD 경로일 때만 BGRA → tover 거침
         }
-
-        // 3) GPU NV12 (D3D11Memory)
+        // (공통) prev → vd3d2 에서 NV12로 1회 변환
         if (!link_ok(prev, vd3d2)) { gst_object_unref(bin); return NULL; }
-        // 제로카피를 위한 D3D11Memory NV12 caps
+
+        // 제로카피용 D3D11Memory NV12 caps
         GstCaps* gpu_nv12_caps = gst_caps_new_simple("video/x-raw",
             "format", G_TYPE_STRING, "NV12",
             "width", G_TYPE_INT, out_w,
             "height", G_TYPE_INT, out_h,
             "framerate", GST_TYPE_FRACTION, fps, 1,
             "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, NULL);
-        GstCapsFeatures* d3d11_feat = gst_caps_features_new("memory:D3D11Memory", NULL);
-        gst_caps_set_features(gpu_nv12_caps, 0, d3d11_feat);
+        gst_caps_set_features(gpu_nv12_caps, 0, gst_caps_features_new("memory:D3D11Memory", NULL));
 
         gboolean zero_copy_ok = FALSE;
 
-        // 4) 인코더 설정 (+ HW일 때 restriction을 D3D11Memory로 줘서 제로카피 유도)
+        // 2) (실험) 파서 생략 플래그
+        const gboolean NO_PARSE_HW = TRUE; // HW 가속 시 h264parse 생략 시도
+
+        // HW 가속이면: encodebin에 D3D11Memory NV12를 제한으로 주고 제로카피 우선 시도
         if (self->enable_hw_accel) {
             // encodebin profile + restriction (D3D11 NV12)
             GstCaps* h264_caps = gst_caps_from_string("video/x-h264,profile=high");
@@ -295,10 +293,10 @@ namespace GStreamerWrapper {
             g_object_set(venc, "profile", vprof, NULL);
             gst_encoding_profile_unref(vprof);
             gst_caps_unref(h264_caps);
-            // element-added 튜닝 콜백
-            g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
 
-            // ★ 제로카피 경로 먼저 시도: vd3d2 -> vq1 (D3D11 NV12) -> encodebin
+            // on_encodebin_element_added 콜백에서 repeat-headers/aud/byte-stream 등 설정 권장
+
+            // ★ 제로카피 경로 시도: vd3d2 -> vq1 (D3D11 NV12) -> encodebin
             if (gst_element_link_filtered(vd3d2, vq1, gst_caps_ref(gpu_nv12_caps)) &&
                 gst_element_link(vq1, venc)) {
                 zero_copy_ok = TRUE;
@@ -309,9 +307,9 @@ namespace GStreamerWrapper {
             }
         }
 
-        // 5) CPU 폴백 경로 (HW off 이거나 zero-copy 실패 시)
+        // CPU 폴백 경로 (HW off이거나 zero-copy 실패 시)
         if (!self->enable_hw_accel || !zero_copy_ok) {
-            // vd3d2 → vdown (GPU NV12 그대로) → vconv → vq1 (CPU NV12) → 인코더
+            // vd3d2 → vdown(D3D11 NV12) → vconv(CPU NV12) → vq1
             {
                 std::ostringstream gpu_css;
                 gpu_css << "video/x-raw(memory:D3D11Memory),format=NV12,"
@@ -329,7 +327,6 @@ namespace GStreamerWrapper {
             }
 
             if (self->enable_hw_accel) {
-                // encodebin은 profile은 이미 설정됨. vq1 → venc 링크만 하면 됨.
                 if (!gst_element_link(vq1, venc)) { gst_object_unref(bin); return NULL; }
             }
             else {
@@ -346,25 +343,37 @@ namespace GStreamerWrapper {
             }
         }
 
-        // 6) parse → caps → queue → pay
-        g_object_set(vparse, "config-interval", 1, NULL);
+        // 2) (실험) HW 가속 시 파서 생략 경로
+        gboolean linked_after_enc = FALSE;
+        g_object_set(vparse, "config-interval", 1, NULL); // 사용 시를 대비해 설정
+        if (self->enable_hw_accel && NO_PARSE_HW) {
+            // venc → vcf (vparse 생략)
+            if (link_ok(venc, vcf)) {
+                linked_after_enc = TRUE;
+                g_print("[video] h264parse 생략 경로 사용\n");
+            }
+        }
+        if (!linked_after_enc) {
+            // 기본: venc → vparse → vcf
+            if (!link_ok(venc, vparse)) { gst_object_unref(bin); return NULL; }
+            if (!link_ok(vparse, vcf)) { gst_object_unref(bin); return NULL; }
+        }
+
+        // 3) RTP MTU 상향 (패킷 수 감소)
         {
             GstCaps* paycaps = gst_caps_from_string(
                 "video/x-h264,stream-format=byte-stream,alignment=au,profile=(string)high");
             g_object_set(vcf, "caps", paycaps, NULL);
             gst_caps_unref(paycaps);
         }
-        // vq1은 드롭하지 않음, vq2는 payloader 보호용으로 살짝 leaky
         g_object_set(vq1, "leaky", 0, "max-size-buffers", 0, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
         g_object_set(vq2, "leaky", 2, "max-size-buffers", 2, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
-        g_object_set(vpay, "pt", 96, "config-interval", 1, "mtu", 1200, NULL);
+        g_object_set(vpay, "pt", 96, "config-interval", 1, "mtu", 1400, NULL); // ★ mtu 1400
 
-        if (!link_ok(venc, vparse)) { gst_object_unref(bin); return NULL; }
-        if (!link_ok(vparse, vcf)) { gst_object_unref(bin); return NULL; }
         if (!link_ok(vcf, vq2)) { gst_object_unref(bin); return NULL; }
         if (!link_ok(vq2, vpay)) { gst_object_unref(bin); return NULL; }
 
-        /* --- 오디오 (끊김 해결 튜닝 반영) --- */
+        /* --- 오디오 OFF일 수 있으나, 기존 블록 유지 (self->enable_audio로 제어) --- */
         if (self->enable_audio) {
             GstElement* asrc = gst_element_factory_make("wasapi2src", "asrc");
             if (!asrc) asrc = gst_element_factory_make("wasapisrc", "asrc"); // 폴백
@@ -388,7 +397,6 @@ namespace GStreamerWrapper {
                     "loopback-silence-on-device-mute", TRUE,
                     NULL);
 
-                // 큐 버퍼(끊김 방지): non-leaky + 충분한 시간 버퍼
                 g_object_set(aq1, "leaky", 0, "max-size-buffers", 0, "max-size-bytes", 0,
                     "max-size-time", (gint64)500000000, NULL);
                 g_object_set(aq2, "leaky", 0, "max-size-buffers", 0, "max-size-bytes", 0,
@@ -415,10 +423,10 @@ namespace GStreamerWrapper {
             }
         }
 
-        // 정리
         if (gpu_nv12_caps) gst_caps_unref(gpu_nv12_caps);
         return bin;
     }
+
 
 
     /* ---------- finalize ---------- */

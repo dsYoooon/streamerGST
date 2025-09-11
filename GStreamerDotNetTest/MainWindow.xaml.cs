@@ -244,7 +244,7 @@ namespace GStreamerDotNetTest
             setting.FrameRate = new TextBox { Width = 60, Text = "30" };
             root.Children.Add(LabeledControl("Frame rate:", setting.FrameRate));
 
-            setting.Bitrate = new TextBox { Width = 60, Text = "6000" };
+            setting.Bitrate = new TextBox { Width = 60, Text = "4000" };
             root.Children.Add(LabeledControl("Bitrate:", setting.Bitrate));
 
             setting.BitrateControl = new ComboBox();
