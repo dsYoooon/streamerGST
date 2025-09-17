@@ -188,27 +188,18 @@ namespace GStreamerWrapper {
 
     G_DEFINE_TYPE(MyRtspMedia, my_rtsp_media, GST_TYPE_RTSP_MEDIA)
 
-    template <typename PrepareArg>
-    static gboolean my_rtsp_media_prepare_impl(GstRTSPMedia* media, PrepareArg arg) {
+    static gboolean my_rtsp_media_prepare_impl(GstRTSPMedia* media, GstRTSPThread* thread) {
         std::unique_lock<std::mutex> lock(g_pipeline_build_mutex);
         GstRTSPMediaClass* parent_class = GST_RTSP_MEDIA_CLASS(my_rtsp_media_parent_class);
         if (parent_class->prepare) {
-            return parent_class->prepare(media, arg);
+            return parent_class->prepare(media, thread);
         }
         return TRUE;
     }
 
-#if GST_CHECK_VERSION(1, 24, 0)
-    // GStreamer >= 1.24 switched the prepare vfunc to use GstRTSPMediaPrepareFlags.
-    static gboolean my_rtsp_media_prepare(GstRTSPMedia* media, GstRTSPMediaPrepareFlags flags) {
-        return my_rtsp_media_prepare_impl(media, flags);
-    }
-#else
-    // Older releases expect the legacy GstRTSPThread* based signature.
     static gboolean my_rtsp_media_prepare(GstRTSPMedia* media, GstRTSPThread* thread) {
         return my_rtsp_media_prepare_impl(media, thread);
     }
-#endif
 
     static void my_rtsp_media_unprepare(GstRTSPMedia* media) {
         std::unique_lock<std::mutex> lock(g_pipeline_build_mutex);
@@ -220,11 +211,7 @@ namespace GStreamerWrapper {
 
     static void my_rtsp_media_class_init(MyRtspMediaClass* klass) {
         GstRTSPMediaClass* media_class = GST_RTSP_MEDIA_CLASS(klass);
-#if GST_CHECK_VERSION(1, 24, 0)
         media_class->prepare = my_rtsp_media_prepare;
-#else
-        media_class->prepare = my_rtsp_media_prepare;
-#endif
         media_class->unprepare = my_rtsp_media_unprepare;
     }
 
