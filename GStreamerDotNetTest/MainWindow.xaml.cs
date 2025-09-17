@@ -106,7 +106,7 @@ namespace GStreamerDotNetTest
                     BitrateKbps = 8000,
                     KeyframeInterval = 30,
                     Port = 10554 + i,
-                    EnableAudio = true,
+                    EnableAudio = false,
                     AudioDevice = (_audioDevices.Length > 0) ? _audioDevices[0] : null,
                     EnableHardwareAccel = true,
                     EnableOsd = true,
