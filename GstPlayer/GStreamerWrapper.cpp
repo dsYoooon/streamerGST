@@ -23,7 +23,7 @@ namespace GStreamerWrapper {
     void GstPlayer::Initialize()
     {
         gst_init(nullptr, nullptr);
-        gst_debug_set_default_threshold(GST_LEVEL_DEBUG);
+        //gst_debug_set_default_threshold(GST_LEVEL_DEBUG);
     }
     static GstBusSyncReply BusSyncHandler(GstBus* bus, GstMessage* msg, gpointer data)
     {

@@ -1,11 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Windows;
-
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Windows.Controls;
-
 using GStreamerWrapper; // C++/CLI 래퍼 네임스페이스
 
 namespace GStreamerDotNetTest
@@ -17,12 +15,13 @@ namespace GStreamerDotNetTest
         private StreamConfig[] _configs = new StreamConfig[0];
         private string[] _audioDevices = new string[0];
 
+        // --- StreamSetting 클래스는 변경 없음 ---
         private class StreamSetting
         {
             public ComboBox Monitor;
             public TextBox CropX, CropY, CropW, CropH;
-            public ComboBox Resolution; // "Input" / "1080p" / "720p"
-            public bool UseInputResolution; // ★ .NET 내부 전용 플래그
+            public ComboBox Resolution;
+            public bool UseInputResolution;
             public TextBox FrameRate, Bitrate, Keyframe;
             public ComboBox BitrateControl;
             public ComboBox Profile;
@@ -57,7 +56,6 @@ namespace GStreamerDotNetTest
 
             _videoHost = new GstVideoHost();
             videoContainer.Child = _videoHost;
-
             _player = new GstPlayer(_videoHost.Handle);
             _audioDevices = GstPlayer.GetAudioDevices();
 
@@ -65,9 +63,81 @@ namespace GStreamerDotNetTest
             var buttons = new[] { btnM1Play, btnM2Play, btnM3Play, btnM4Play };
             for (int i = 0; i < buttons.Length; i++)
                 buttons[i].Visibility = i < monitorCount ? Visibility.Visible : Visibility.Collapsed;
+
+            // =================================================================
+            // ★ 수정된 부분 1: 프로그램 시작 시 기본 스트림 4개로 UI 설정
+            // =================================================================
+            const int defaultStreamCount = 4;
+            Textbox_numofstreamer.Text = defaultStreamCount.ToString();
+            UpdateStreamTabs(defaultStreamCount);
+            // =================================================================
+            startServer();
         }
 
-        // ★ 핵심: .NET 내부에서만 UseInputResolution 사용, 래퍼로는 계산된 Width/Height만 전달
+        // ★ 추가된 부분: 기본 설정으로 4개 스트림 구성을 생성하는 함수
+        private StreamConfig[] CreateDefaultStreamConfigs(int count)
+        {
+            var list = new List<StreamConfig>();
+            int monitorCount = DisplayHelper.GetMonitorCount();
+
+            for (int i = 0; i < count; i++)
+            {
+                // 모니터 개수보다 스트림이 많으면 모니터 인덱스를 순환시킵니다.
+                int monitorIndex = 0;// (monitorCount > 0) ? (i % monitorCount) : 0;
+
+                int width, height;
+                // 모니터 크기를 가져오지 못하면 기본 1920x1080으로 설정합니다.
+                if (!DisplayHelper.TryGetMonitorSize(monitorIndex, out width, out height))
+                {
+                    width = 1920;
+                    height = 1080;
+                }
+
+                var cfg = new StreamConfig
+                {
+                    MonitorIndex = monitorIndex,
+                    CropX = 0,
+                    CropY = 0,
+                    CropW = width,
+                    CropH = height,
+                    Width = width,
+                    Height = height,
+                    Framerate = 30,
+                    BitrateKbps = 8000,
+                    KeyframeInterval = 30,
+                    Port = 10554 + i,
+                    EnableAudio = true,
+                    AudioDevice = (_audioDevices.Length > 0) ? _audioDevices[0] : null,
+                    EnableHardwareAccel = true,
+                    EnableOsd = true,
+                    BitrateControl = "CBR",
+                    Profile = "high",
+                    OsdText = $"Screen {i + 1}"
+                };
+                list.Add(cfg);
+            }
+            return list.ToArray();
+        }
+        private void startServer()
+        {
+            string serverIp = (Textbox_serverIP.Text ?? "").Trim();
+
+            // =================================================================
+            // ★ 수정된 부분 2: UI 설정 대신 기본 설정 값 사용
+            // =================================================================
+            _configs = CreateDefaultStreamConfigs(4);
+            // =================================================================
+
+            if (_player != null)
+                _player.StartScreenCaptureServer(serverIp, _configs);
+        }
+        private void btnPlay_Click(object sender, RoutedEventArgs e)
+        {
+            startServer();
+        }
+
+        // --- 이하 나머지 코드는 변경 없습니다. ---
+
         private StreamConfig[] CollectStreamConfigs()
         {
             var list = new List<StreamConfig>();
@@ -87,12 +157,10 @@ namespace GStreamerDotNetTest
                 int.TryParse(s.CropH.Text, out ch);
                 cfg.CropX = cx; cfg.CropY = cy; cfg.CropW = cw; cfg.CropH = ch;
 
-                // UseInputResolution은 UI 콤보 선택에 의해 갱신됨(SelectionChanged)
                 bool useInput = s.UseInputResolution;
 
                 if (useInput)
                 {
-                    // 입력해상도 기반: 크롭값이 있으면 그게 곧 출력해상도
                     if (cw > 0 && ch > 0)
                     {
                         cfg.Width = cw;
@@ -144,14 +212,6 @@ namespace GStreamerDotNetTest
             return list.ToArray();
         }
 
-        private void btnPlay_Click(object sender, RoutedEventArgs e)
-        {
-            string serverIp = (Textbox_serverIP.Text ?? "").Trim();
-            _configs = CollectStreamConfigs();
-            if (_player != null)
-                _player.StartScreenCaptureServer(serverIp, _configs);
-        }
-
         private void btnStop_Click(object sender, RoutedEventArgs e)
         {
             if (_player != null) _player.Stop();
@@ -179,7 +239,6 @@ namespace GStreamerDotNetTest
             int width, height;
             if (DisplayHelper.TryGetMonitorSize(monitorIndex, out width, out height))
             {
-                // 단일 미리보기: 입력해상도 규칙 사용 (출력=크롭)
                 var cfg = new StreamConfig
                 {
                     MonitorIndex = monitorIndex,
@@ -267,7 +326,6 @@ namespace GStreamerDotNetTest
             setting.Resolution.Items.Add("1080p");
             setting.Resolution.Items.Add("720p");
             setting.Resolution.SelectedIndex = 0;
-            // ★ 콤보 변경 시 내부 플래그 갱신
             setting.UseInputResolution = true;
             setting.Resolution.SelectionChanged += (s, e) =>
             {
@@ -344,9 +402,7 @@ namespace GStreamerDotNetTest
 
         private void BtnSaveSetting_Click(object sender, RoutedEventArgs e)
         {
-            // 테스트 프로젝트: 저장 기능 없음. 현재 입력만 수집.
             _configs = CollectStreamConfigs();
-            //MessageBox.Show("현재 설정을 수집했습니다.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 }
