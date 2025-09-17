@@ -188,6 +188,10 @@ namespace GStreamerWrapper {
 
     G_DEFINE_TYPE(MyRtspMedia, my_rtsp_media, GST_TYPE_RTSP_MEDIA)
 
+#ifndef MY_TYPE_RTSP_MEDIA
+#define MY_TYPE_RTSP_MEDIA (my_rtsp_media_get_type())
+#endif
+
     static gboolean my_rtsp_media_prepare_impl(GstRTSPMedia* media, GstRTSPThread* thread) {
         std::unique_lock<std::mutex> lock(g_pipeline_build_mutex);
         GstRTSPMediaClass* parent_class = GST_RTSP_MEDIA_CLASS(my_rtsp_media_parent_class);
@@ -201,12 +205,13 @@ namespace GStreamerWrapper {
         return my_rtsp_media_prepare_impl(media, thread);
     }
 
-    static void my_rtsp_media_unprepare(GstRTSPMedia* media) {
+    static gboolean my_rtsp_media_unprepare(GstRTSPMedia* media) {
         std::unique_lock<std::mutex> lock(g_pipeline_build_mutex);
         GstRTSPMediaClass* parent_class = GST_RTSP_MEDIA_CLASS(my_rtsp_media_parent_class);
         if (parent_class->unprepare) {
-            parent_class->unprepare(media);
+            return parent_class->unprepare(media);
         }
+        return TRUE;
     }
 
     static void my_rtsp_media_class_init(MyRtspMediaClass* klass) {
