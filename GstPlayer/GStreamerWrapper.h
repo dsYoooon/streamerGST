@@ -21,12 +21,14 @@ namespace GStreamerWrapper {
         int Framerate;
         int BitrateKbps;
         int KeyframeInterval;
+		int Port;
         bool EnableAudio;
         String^ AudioDevice;
         bool EnableHardwareAccel;
         bool EnableOsd;
         String^ BitrateControl;
         String^ Profile;
+        String^ OsdText;
     };
 
     public ref class GstPlayer

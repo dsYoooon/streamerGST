@@ -1,4 +1,9 @@
 ﻿// ScreenCaptureServer.cpp (encodebin + per-option HW accel on/off, multi-vendor stable)
+// Per-stream RTSP port (server-per-stream) version
+// 2025-09-17:
+//  - Shared GLib context / thread-pool / session-pool
+//  - mtu=1200, queues tuned, h264parse always (stability-first)
+//  - **FIX**: Type-safe property setter for enum/string → prevents heap corruption
 
 #include <gst/gst.h>
 #include <gst/rtsp-server/rtsp-server.h>
@@ -8,6 +13,7 @@
 #include <sstream>
 #include <iostream>
 #include <thread>
+#include <cstdio>
 
 #include "ScreenCaptureServer.h"
 
@@ -19,12 +25,21 @@ namespace GStreamerWrapper {
     static std::string g_server_ip;
     static std::vector<StreamConfigNative> g_configs;
 
-    struct RtspServerContext {
-        GMainLoop* loop = NULL;
+    /* ---------- RTSP context: multiple servers (one per stream) ---------- */
+    struct ServerEntry {
         GstRTSPServer* server = NULL;
         GstRTSPMountPoints* mounts = NULL;
-        guint server_source_id = 0;
-        std::vector<GstRTSPMediaFactory*> factories;
+        guint                source_id = 0;     // attach() id
+        int                  service_port = 0;  // listening port (cfg.port)
+    };
+
+    struct RtspServerContext {
+        GMainLoop* loop = NULL;                 // single mainloop
+        GMainContext* main_ctx = NULL;          // shared main context
+        GstRTSPThreadPool* thread_pool = NULL;  // shared worker pool
+        GstRTSPSessionPool* session_pool = NULL;// shared session pool
+        std::vector<ServerEntry> servers;       // N servers
+        std::vector<GstRTSPMediaFactory*> factories; // N factories (1:1)
     };
 
     static RtspServerContext g_ctx;
@@ -42,8 +57,159 @@ namespace GStreamerWrapper {
     static void set_bool_if(GstElement* e, const char* name, gboolean v) {
         if (element_has_property(e, name)) g_object_set(e, name, v, NULL);
     }
-    static void set_str_if(GstElement* e, const char* name, const char* v) {
-        if (element_has_property(e, name)) g_object_set(e, name, v, NULL);
+
+    // === NEW: type-safe setter for string/enum properties ====================
+    static gboolean set_str_or_enum_if(GstElement* e, const char* prop, const char* value)
+    {
+        if (!e || !prop || !value) return FALSE;
+        GObjectClass* klass = G_OBJECT_GET_CLASS(e);
+        GParamSpec* pspec = g_object_class_find_property(klass, prop);
+        if (!pspec) return FALSE;
+
+        GType vt = G_PARAM_SPEC_VALUE_TYPE(pspec);
+
+        // (1) String
+        if (vt == G_TYPE_STRING) {
+            g_object_set(e, prop, value, NULL);
+            return TRUE;
+        }
+
+        // (2) Enum: try nick/name (case-insensitive)
+        if (g_type_is_a(vt, G_TYPE_ENUM)) {
+            GEnumClass* ec = (GEnumClass*)g_type_class_ref(vt);
+            if (!ec) return FALSE;
+
+            // direct match: nick or name
+            gint chosen = G_MININT;
+            for (guint i = 0; i < ec->n_values; ++i) {
+                const GEnumValue* ev = &ec->values[i];
+                if ((ev->value_nick && g_ascii_strcasecmp(ev->value_nick, value) == 0) ||
+                    (ev->value_name && g_ascii_strcasecmp(ev->value_name, value) == 0)) {
+                    chosen = ev->value;
+                    break;
+                }
+            }
+
+            // fallback aliases for common vendor props
+            if (chosen == G_MININT) {
+                // nvh264enc preset aliases
+                if (g_ascii_strcasecmp(prop, "preset") == 0) {
+                    if (!g_ascii_strcasecmp(value, "llhq") || !g_ascii_strcasecmp(value, "low-latency-hq")) {
+                        // try to find "llhq"
+                        for (guint i = 0; i < ec->n_values; ++i)
+                            if (ec->values[i].value_nick && g_ascii_strcasecmp(ec->values[i].value_nick, "llhq") == 0)
+                            {
+                                chosen = ec->values[i].value; break;
+                            }
+                    }
+                    else if (!g_ascii_strcasecmp(value, "llhp") || !g_ascii_strcasecmp(value, "low-latency-hp")) {
+                        for (guint i = 0; i < ec->n_values; ++i)
+                            if (ec->values[i].value_nick && g_ascii_strcasecmp(ec->values[i].value_nick, "llhp") == 0)
+                            {
+                                chosen = ec->values[i].value; break;
+                            }
+                    }
+                }
+
+                // rc-mode / rate-control: cbr/vbr → enum
+                if (chosen == G_MININT &&
+                    (!g_ascii_strcasecmp(prop, "rc-mode") || !g_ascii_strcasecmp(prop, "rate-control"))) {
+                    const char* want = (g_ascii_strcasecmp(value, "vbr") == 0) ? "vbr" : "cbr";
+                    for (guint i = 0; i < ec->n_values; ++i) {
+                        if (ec->values[i].value_nick && g_ascii_strcasecmp(ec->values[i].value_nick, want) == 0) {
+                            chosen = ec->values[i].value; break;
+                        }
+                    }
+                }
+
+                // amfenc_h264 usage: ultra-low-latency
+                if (chosen == G_MININT && !g_ascii_strcasecmp(prop, "usage")) {
+                    // try exact nick if exists, else map to something closest
+                    for (guint i = 0; i < ec->n_values; ++i) {
+                        if (ec->values[i].value_nick &&
+                            (g_ascii_strcasecmp(ec->values[i].value_nick, "ultra-low-latency") == 0 ||
+                                g_ascii_strcasecmp(ec->values[i].value_nick, "ultralowlatency") == 0)) {
+                            chosen = ec->values[i].value; break;
+                        }
+                    }
+                }
+            }
+
+            gboolean ok = FALSE;
+            if (chosen != G_MININT) {
+                g_object_set(e, prop, chosen, NULL);
+                ok = TRUE;
+            }
+            g_type_class_unref(ec);
+            return ok;
+        }
+
+        // (3) Otherwise: do not touch (prevents varargs UB)
+        return FALSE;
+    }
+    // ========================================================================
+    // ===== [추가] 안전한 프로퍼티 세터들 =====
+    static gboolean set_property_enum_by_nick(GObject* obj, const char* prop, const char* nick_or_name) {
+        if (!obj || !prop || !nick_or_name) return FALSE;
+        GParamSpec* pspec = g_object_class_find_property(G_OBJECT_GET_CLASS(obj), prop);
+        if (!pspec) return FALSE;
+        GType ptype = G_PARAM_SPEC_VALUE_TYPE(pspec);
+        if (!g_type_is_a(ptype, G_TYPE_ENUM)) return FALSE;
+
+        GEnumClass* eclass = (GEnumClass*)g_type_class_ref(ptype);
+        if (!eclass) return FALSE;
+
+        const GEnumValue* hit = NULL;
+        // name 또는 nick 일치 탐색 (대소문자 무시)
+        for (int i = 0; i < eclass->n_values; ++i) {
+            const GEnumValue* v = &eclass->values[i];
+            if ((v->value_name && g_ascii_strcasecmp(v->value_name, nick_or_name) == 0) ||
+                (v->value_nick && g_ascii_strcasecmp(v->value_nick, nick_or_name) == 0)) {
+                hit = v; break;
+            }
+        }
+
+        gboolean ok = FALSE;
+        if (hit) {
+            GValue gv = G_VALUE_INIT;
+            g_value_init(&gv, ptype);
+            g_value_set_enum(&gv, hit->value);
+            g_object_set_property(obj, prop, &gv);
+            g_value_unset(&gv);
+            ok = TRUE;
+        }
+        g_type_class_unref(eclass);
+        return ok;
+    }
+
+    static gboolean set_property_string_or_enum(GObject* obj, const char* prop, const char* val) {
+        if (!obj || !prop || !val) return FALSE;
+        GParamSpec* pspec = g_object_class_find_property(G_OBJECT_GET_CLASS(obj), prop);
+        if (!pspec) return FALSE;
+        GType ptype = G_PARAM_SPEC_VALUE_TYPE(pspec);
+
+        if (ptype == G_TYPE_STRING) {
+            GValue gv = G_VALUE_INIT;
+            g_value_init(&gv, G_TYPE_STRING);
+            g_value_set_string(&gv, val);
+            g_object_set_property(obj, prop, &gv);
+            g_value_unset(&gv);
+            return TRUE;
+        }
+        if (g_type_is_a(ptype, G_TYPE_ENUM)) {
+            return set_property_enum_by_nick(obj, prop, val);
+        }
+        return FALSE; // 다른 타입은 건드리지 않음
+    }
+
+    // (옵션) enum nick 세팅이 실패하면 숫자 fallback 도 시도하는 헬퍼
+    static void set_rc_with_fallback(GObject* obj, const char* prop, const char* rc_nick,
+        int vbr_val /*e.g., 0*/, int cbr_val /*e.g., 1*/) {
+        if (!set_property_string_or_enum(obj, prop, rc_nick)) {
+            // enum nick을 못 찾으면 값으로 시도 (플러그인마다 값이 다를 수 있어 프로젝트별로 맞춰주세요)
+            int v = (g_ascii_strcasecmp(rc_nick, "vbr") == 0) ? vbr_val : cbr_val;
+            g_object_set(obj, prop, v, NULL);
+        }
     }
 
     /* ---------- rank control: enable_hw ? HW↑ : SW↑ ---------- */
@@ -57,16 +223,13 @@ namespace GStreamerWrapper {
             };
 
         if (enable_hw) {
-            // 하드웨어 인코더 우선
             set_rank("nvh264enc", GST_RANK_PRIMARY + 220);
             set_rank("amfenc_h264", GST_RANK_PRIMARY + 210);
             set_rank("qsvh264enc", GST_RANK_PRIMARY + 200);
             set_rank("d3d11h264enc", GST_RANK_PRIMARY + 190);
-            // 소프트웨어는 낮춤
             set_rank("x264enc", GST_RANK_SECONDARY);
         }
         else {
-            // 소프트웨어 인코더 우선 (HW는 뒤로)
             set_rank("x264enc", GST_RANK_PRIMARY + 200);
             set_rank("nvh264enc", GST_RANK_SECONDARY);
             set_rank("amfenc_h264", GST_RANK_SECONDARY);
@@ -90,7 +253,6 @@ namespace GStreamerWrapper {
         }
         g_signal_connect(client, "closed", G_CALLBACK(client_closed_callback), user_data);
     }
-
     static GstRTSPFilterResult force_client_disconnect(GstRTSPServer*, GstRTSPClient* client, gpointer) {
         gst_rtsp_client_close(client);
         return GST_RTSP_FILTER_REMOVE;
@@ -110,7 +272,7 @@ namespace GStreamerWrapper {
         int keyint;
         gboolean enable_audio;
         gchar* audio_device;
-        gboolean enable_hw_accel; // ★ 옵션 반영
+        gboolean enable_hw_accel; // 옵션 반영
         gboolean enable_osd;
         gchar* bitrate_control;
         gchar* profile;
@@ -126,7 +288,6 @@ namespace GStreamerWrapper {
 
     G_DEFINE_TYPE(MyMediaFactory, my_media_factory, GST_TYPE_RTSP_MEDIA_FACTORY)
 
-        /* ---------- encodebin element-added: vendor별 저지연 튜닝 ---------- */
         static void on_encodebin_element_added(GstElement* encodebin, GstElement* elem, gpointer user_data) {
         (void)encodebin;
         MyMediaFactory* mf = (MyMediaFactory*)user_data;
@@ -140,47 +301,59 @@ namespace GStreamerWrapper {
         g_print("[encodebin] selected: %s (bitrate=%dk, keyint=%d)\n",
             fname, mf->v_bitrate_kbps, mf->keyint);
 
-        // 공통 시도
+        // 공통: 정수형은 그대로, 문자열/enum은 안전세터로
         set_int_if(elem, "bitrate", mf->v_bitrate_kbps * 1000);
         set_int_if(elem, "key-int-max", mf->keyint);
         set_int_if(elem, "gop-size", mf->keyint);
-        set_str_if(elem, "profile", mf->profile);
+        if (mf->profile && *mf->profile) {
+            set_property_string_or_enum(G_OBJECT(elem), "profile", mf->profile);
+        }
         const gchar* rc = mf->bitrate_control ? mf->bitrate_control : "CBR";
+        const gchar* rc_nick = (g_ascii_strcasecmp(rc, "VBR") == 0) ? "vbr" : "cbr";
 
         if (g_strcmp0(fname, "x264enc") == 0) {
             set_int_if(elem, "speed-preset", 1 /*ultrafast*/);
             set_int_if(elem, "tune", 0x00000004 /*zerolatency*/);
             set_bool_if(elem, "byte-stream", TRUE);
-            // 일부 빌드에서 kbps 단위
+            // 일부 빌드에서 kbps 단위일 수 있어 재설정
             set_int_if(elem, "bitrate", mf->v_bitrate_kbps);
+            // x264enc 의 profile 은 enum이 아니라 string인 빌드도 있으므로 위에서 이미 안전세터 사용
         }
         else if (g_strcmp0(fname, "qsvh264enc") == 0) {
             set_bool_if(elem, "lowpower", TRUE);
-            set_int_if(elem, "rate-control", g_strcmp0(rc, "VBR") == 0 ? 0 : 1);
+            // rate-control: enum (프로젝트별 빌드 값 상이) → 우선 nick으로, 실패 시 값 fallback(예: VBR=0, CBR=1)
+            set_rc_with_fallback(G_OBJECT(elem), "rate-control", rc_nick, /*vbr*/0, /*cbr*/1);
             set_int_if(elem, "target-usage", 3);
             set_int_if(elem, "gop-ref-dist", 1);
         }
         else if (g_strcmp0(fname, "nvh264enc") == 0) {
-            set_str_if(elem, "preset", "llhq");
-            set_str_if(elem, "rc-mode", g_strcmp0(rc, "VBR") == 0 ? "vbr" : "cbr");
+            // preset/rc-mode 모두 enum인 빌드 존재 → 안전세터
+            set_property_string_or_enum(G_OBJECT(elem), "preset", "llhq");
+            set_property_string_or_enum(G_OBJECT(elem), "rc-mode", rc_nick);
             set_int_if(elem, "rc-lookahead", 0);
             set_int_if(elem, "b-frames", 0);
         }
         else if (g_strcmp0(fname, "amfenc_h264") == 0) {
-            set_str_if(elem, "usage", "ultra-low-latency"); // 없으면 무시됨
-            set_int_if(elem, "rate-control", g_strcmp0(rc, "VBR") == 0 ? 0 : 1);
+            // usage/rate-control 모두 enum → 안전세터
+            set_property_string_or_enum(G_OBJECT(elem), "usage", "ultra-low-latency");
+            set_property_string_or_enum(G_OBJECT(elem), "rate-control", rc_nick);
             set_int_if(elem, "b-frames", 0);
         }
         else if (g_strcmp0(fname, "d3d11h264enc") == 0) {
             set_int_if(elem, "b-frames", 0);
-            set_str_if(elem, "rate-control", g_strcmp0(rc, "VBR") == 0 ? "vbr" : "cbr");
+            // rate-control: enum → 안전세터
+            set_property_string_or_enum(G_OBJECT(elem), "rate-control", rc_nick);
         }
     }
+
 
     /* ---------- media events ---------- */
     static void on_media_unprepared(GstRTSPMedia* media, gpointer) {
         g_print("[media] unprepared\n");
-        if (GstElement* e = gst_rtsp_media_get_element(media)) { gst_element_set_state(e, GST_STATE_NULL); gst_object_unref(e); }
+        if (GstElement* e = gst_rtsp_media_get_element(media)) {
+            gst_element_set_state(e, GST_STATE_NULL);
+            gst_object_unref(e);
+        }
     }
     static void on_media_prepared(GstRTSPMedia*, gpointer) { g_print("[media] prepared\n"); }
     static void on_media_configure(GstRTSPMediaFactory*, GstRTSPMedia* media, gpointer) {
@@ -196,7 +369,6 @@ namespace GStreamerWrapper {
     }
 
     /* ---------- create pipeline ---------- */
-/* ---------- create pipeline ---------- */
     static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory, const GstRTSPUrl*) {
         MyMediaFactory* self = (MyMediaFactory*)factory;
 
@@ -206,7 +378,6 @@ namespace GStreamerWrapper {
         const gint a_bps = self->a_bitrate_bps;
         const gint keyint = self->keyint > 0 ? self->keyint : fps;
 
-        // 옵션에 따라 인코더 랭크 구성
         set_encoder_ranks_by_option(self->enable_hw_accel);
         g_print("[video] HW accel option: %s\n", self->enable_hw_accel ? "ON" : "OFF");
 
@@ -244,33 +415,41 @@ namespace GStreamerWrapper {
         if (self->enable_osd)
             gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
         else
-            gst_bin_add_many(GST_BIN(bin), vsrc,        /*vd3d X*/ /*tover X*/ vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
+            gst_bin_add_many(GST_BIN(bin), vsrc, /*vd3d X*/ /*tover X*/ vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
 
         // 캡처 기본 설정
         g_object_set(vsrc,
             "monitor-index", monitor_index, "show-cursor", TRUE,
-            "crop-x", crop_x, "crop-y", crop_y, "crop-width", crop_w, "crop-height", crop_h, NULL);
+            "crop-x", crop_x, "crop-y", crop_y, "crop-width", crop_w, "crop-height", crop_h,
+            "capture-api",0,
+            NULL);
 
-        // 1) OSD OFF면 첫 변환(d3d11convert) 제거 → vsrc에서 바로 NV12로
+        // 1) OSD 경로: BGRA로 변환 후 overlay
         GstElement* prev = vsrc;
         if (self->enable_osd) {
-            // vsrc → (BGRA) vd3d → tover
-            {
-                std::ostringstream css;
-                css << "video/x-raw(memory:D3D11Memory),format=BGRA,"
-                    << "width=" << out_w << ",height=" << out_h
-                    << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
-                if (!link_ok(vsrc, vd3d, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
-            }
+            std::ostringstream css;
+            css << "video/x-raw(memory:D3D11Memory),format=BGRA,"
+                << "width=" << out_w << ",height=" << out_h
+                << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
+            if (!link_ok(vsrc, vd3d, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
+
             const gchar* txt = (self->overlay_text && *self->overlay_text) ? self->overlay_text : "";
-            g_object_set(tover, "text", txt, "font-desc", "Segoe UI 11",
-                "halignment", 0, "valignment", 2, "xpad", 8, "ypad", 8,
-                "shaded-background", TRUE, "draw-shadow", TRUE, NULL);
+            g_object_set(tover,
+                "text", txt,
+                "font-family", "Segoe UI",
+                "font-size", 20.0,     // gdouble
+                "layout-x", 0.03, "layout-y", 0.03, "layout-width", 0.94, "layout-height", 0.94,
+                "text-alignment", 0, "paragraph-alignment", 0,
+                "foreground-color", 0xFFFFFFFFu, "background-color", 0x00000000u,
+                "outline-color", 0x80000000u, "shadow-color", 0x80000000u,
+                NULL);
+
             self->overlay_elem = tover;
             g_object_add_weak_pointer(G_OBJECT(tover), (gpointer*)&self->overlay_elem);
             if (!link_ok(vd3d, tover)) { gst_object_unref(bin); return NULL; }
-            prev = tover; // OSD 경로일 때만 BGRA → tover 거침
+            prev = tover;
         }
+
         // (공통) prev → vd3d2 에서 NV12로 1회 변환
         if (!link_ok(prev, vd3d2)) { gst_object_unref(bin); return NULL; }
 
@@ -285,12 +464,11 @@ namespace GStreamerWrapper {
 
         gboolean zero_copy_ok = FALSE;
 
-        // 2) (실험) 파서 생략 플래그
-        const gboolean NO_PARSE_HW = TRUE; // HW 가속 시 h264parse 생략 시도
+        // 안정성: HW 가속 시에도 파서 사용 (AU 정렬/헤더 보장)
+        const gboolean NO_PARSE_HW = FALSE;
 
-        // HW 가속이면: encodebin에 D3D11Memory NV12를 제한으로 주고 제로카피 우선 시도
+        // HW 가속이면: encodebin + 제로카피 우선 시도
         if (self->enable_hw_accel) {
-            // encodebin profile + restriction (D3D11 NV12)
             std::ostringstream pcaps;
             pcaps << "video/x-h264,profile=" << (self->profile ? self->profile : "high");
             GstCaps* h264_caps = gst_caps_from_string(pcaps.str().c_str());
@@ -301,9 +479,10 @@ namespace GStreamerWrapper {
             gst_encoding_profile_unref(vprof);
             gst_caps_unref(h264_caps);
 
-            // on_encodebin_element_added 콜백에서 repeat-headers/aud/byte-stream 등 설정 권장
+            // encodebin 내부로 선택된 실제 인코더 튜닝
+            g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
 
-            // ★ 제로카피 경로 시도: vd3d2 -> vq1 (D3D11 NV12) -> encodebin
+            // ★ 제로카피 경로: vd3d2 -> vq1 (D3D11 NV12) -> encodebin
             if (gst_element_link_filtered(vd3d2, vq1, gst_caps_ref(gpu_nv12_caps)) &&
                 gst_element_link(vq1, venc)) {
                 zero_copy_ok = TRUE;
@@ -339,51 +518,52 @@ namespace GStreamerWrapper {
             else {
                 // 소프트웨어 x264enc 세팅
                 g_object_set(venc,
-                    "bitrate", self->v_bitrate_kbps,
+                    "bitrate", self->v_bitrate_kbps,     // x264: kbps
                     "key-int-max", keyint,
                     "gop-size", keyint,
                     "speed-preset", 1 /*ultrafast*/,
                     "tune", 0x00000004 /*zerolatency*/,
                     "byte-stream", TRUE,
                     NULL);
-                set_str_if(venc, "profile", self->profile);
+                set_str_or_enum_if(venc, "profile", self->profile ? self->profile : "high");
                 if (!gst_element_link(vq1, venc)) { gst_object_unref(bin); return NULL; }
             }
         }
 
-        // 2) (실험) HW 가속 시 파서 생략 경로
+        // 파서 경로 (기본)
         gboolean linked_after_enc = FALSE;
-        g_object_set(vparse, "config-interval", 1, NULL); // 사용 시를 대비해 설정
+        g_object_set(vparse, "config-interval", 1, NULL);
         if (self->enable_hw_accel && NO_PARSE_HW) {
-            // venc → vcf (vparse 생략)
             if (link_ok(venc, vcf)) {
                 linked_after_enc = TRUE;
                 g_print("[video] h264parse 생략 경로 사용\n");
             }
         }
         if (!linked_after_enc) {
-            // 기본: venc → vparse → vcf
             if (!link_ok(venc, vparse)) { gst_object_unref(bin); return NULL; }
             if (!link_ok(vparse, vcf)) { gst_object_unref(bin); return NULL; }
         }
 
-        // 3) RTP MTU 상향 (패킷 수 감소)
+        // RTP caps & queues
         {
             std::ostringstream paystr;
             paystr << "video/x-h264,stream-format=byte-stream,alignment=au,profile=(string)"
-                   << (self->profile ? self->profile : "high");
+                << (self->profile ? self->profile : "high");
             GstCaps* paycaps = gst_caps_from_string(paystr.str().c_str());
             g_object_set(vcf, "caps", paycaps, NULL);
             gst_caps_unref(paycaps);
         }
-        g_object_set(vq1, "leaky", 0, "max-size-buffers", 0, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
-        g_object_set(vq2, "leaky", 2, "max-size-buffers", 2, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
-        g_object_set(vpay, "pt", 96, "config-interval", 1, "mtu", 1400, NULL); // ★ mtu 1400
+        // queue 튜닝: 얕되 약간의 여유
+        g_object_set(vq1, "leaky", 2, "max-size-buffers", 15, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
+        g_object_set(vq2, "leaky", 2, "max-size-buffers", 8, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
+
+        // MTU 1200 (조각화 회피)
+        g_object_set(vpay, "pt", 96, "config-interval", 1, "mtu", 1200, NULL);
 
         if (!link_ok(vcf, vq2)) { gst_object_unref(bin); return NULL; }
         if (!link_ok(vq2, vpay)) { gst_object_unref(bin); return NULL; }
 
-        /* --- 오디오 OFF일 수 있으나, 기존 블록 유지 (self->enable_audio로 제어) --- */
+        /* --- 오디오 (선택) --- */
         if (self->enable_audio) {
             GstElement* asrc = gst_element_factory_make("wasapi2src", "asrc");
             if (!asrc) asrc = gst_element_factory_make("wasapisrc", "asrc"); // 폴백
@@ -407,10 +587,10 @@ namespace GStreamerWrapper {
                     "loopback-silence-on-device-mute", TRUE,
                     NULL);
 
-                g_object_set(aq1, "leaky", 0, "max-size-buffers", 0, "max-size-bytes", 0,
-                    "max-size-time", (gint64)500000000, NULL);
-                g_object_set(aq2, "leaky", 0, "max-size-buffers", 0, "max-size-bytes", 0,
-                    "max-size-time", (gint64)500000000, NULL);
+                g_object_set(aq1, "leaky", 2, "max-size-buffers", 20, "max-size-bytes", 0,
+                    "max-size-time", (gint64)0, NULL);
+                g_object_set(aq2, "leaky", 2, "max-size-buffers", 12, "max-size-bytes", 0,
+                    "max-size-time", (gint64)0, NULL);
 
                 GstCaps* a_caps = gst_caps_new_simple("audio/x-raw",
                     "format", G_TYPE_STRING, "S16LE",
@@ -437,8 +617,6 @@ namespace GStreamerWrapper {
         return bin;
     }
 
-
-
     /* ---------- finalize ---------- */
     static void my_media_factory_finalize(GObject* object) {
         MyMediaFactory* self = (MyMediaFactory*)object;
@@ -446,10 +624,10 @@ namespace GStreamerWrapper {
             g_object_remove_weak_pointer(G_OBJECT(self->overlay_elem), (gpointer*)&self->overlay_elem);
             self->overlay_elem = NULL;
         }
-        if (self->overlay_text) { g_free(self->overlay_text); self->overlay_text = NULL; }
-        if (self->audio_device) { g_free(self->audio_device); self->audio_device = NULL; }
+        if (self->overlay_text) { g_free(self->overlay_text);    self->overlay_text = NULL; }
+        if (self->audio_device) { g_free(self->audio_device);    self->audio_device = NULL; }
         if (self->bitrate_control) { g_free(self->bitrate_control); self->bitrate_control = NULL; }
-        if (self->profile) { g_free(self->profile); self->profile = NULL; }
+        if (self->profile) { g_free(self->profile);         self->profile = NULL; }
         G_OBJECT_CLASS(my_media_factory_parent_class)->finalize(object);
     }
     static void my_media_factory_class_init(MyMediaFactoryClass* klass) {
@@ -463,19 +641,19 @@ namespace GStreamerWrapper {
         self->overlay_elem = NULL;
         self->crop_x = self->crop_y = self->crop_w = self->crop_h = 0;
         self->audio_device = NULL;
-        self->enable_hw_accel = TRUE; // 기본값 (구조체에서 덮임)
+        self->enable_hw_accel = TRUE;  // 기본값 (구조체에서 덮임)
         self->enable_osd = TRUE;
         self->keyint = 0;
         self->bitrate_control = g_strdup("CBR");
         self->profile = g_strdup("high");
     }
 
-    /* ---------- factory build / server ---------- */
-    static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative& cfg, int stream_index) {
+    /* ---------- factory build / per-stream server ---------- */
+    static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative& cfg, int stream_index_1based) {
         MyMediaFactory* f = (MyMediaFactory*)g_object_new(my_media_factory_get_type(), NULL);
 
         f->monitor_index = cfg.monitor_index;
-        f->crop_x = cfg.crop_x; f->crop_y = cfg.crop_y; f->crop_w = cfg.crop_w; f->crop_h = cfg.crop_h;
+        f->crop_x = cfg.crop_x;  f->crop_y = cfg.crop_y;  f->crop_w = cfg.crop_w;  f->crop_h = cfg.crop_h;
         f->out_w = cfg.width > 0 ? cfg.width : 1920;
         f->out_h = cfg.height > 0 ? cfg.height : 1080;
         f->fps = cfg.framerate > 0 ? cfg.framerate : 30;
@@ -483,32 +661,39 @@ namespace GStreamerWrapper {
         f->a_bitrate_bps = 128000;
         f->enable_audio = cfg.enable_audio;
         if (!cfg.audio_device.empty()) f->audio_device = g_strdup(cfg.audio_device.c_str());
-        f->enable_hw_accel = cfg.enable_hw_accel;               // ★ 구조체 옵션 반영
+        f->enable_hw_accel = cfg.enable_hw_accel;
         f->enable_osd = cfg.enable_osd;
         f->keyint = cfg.keyframe_interval > 0 ? cfg.keyframe_interval : f->fps;
+
         if (f->bitrate_control) g_free(f->bitrate_control);
         f->bitrate_control = g_strdup(cfg.bitrate_control.empty() ? "CBR" : cfg.bitrate_control.c_str());
+
         if (f->profile) g_free(f->profile);
         f->profile = g_strdup(cfg.profile.empty() ? "high" : cfg.profile.c_str());
 
         if (f->overlay_text) g_free(f->overlay_text);
-        std::ostringstream def; def << "Screen " << stream_index;
-        f->overlay_text = g_strdup(def.str().c_str());
+        if (!cfg.overlay_text.empty())
+            f->overlay_text = g_strdup(cfg.overlay_text.c_str());
+        else {
+            std::ostringstream def; def << "Screen " << stream_index_1based;
+            f->overlay_text = g_strdup(def.str().c_str());
+        }
 
         gst_rtsp_media_factory_set_shared(GST_RTSP_MEDIA_FACTORY(f), TRUE);
         gst_rtsp_media_factory_set_suspend_mode(GST_RTSP_MEDIA_FACTORY(f), GST_RTSP_SUSPEND_MODE_NONE);
         g_signal_connect(f, "media-configure", G_CALLBACK(on_media_configure), NULL);
 
-        // 서버단 레이턴시(여유): 필요 시 300→400~600 조정
+        // 서버단 레이턴시(여유)
         gst_rtsp_media_factory_set_latency(GST_RTSP_MEDIA_FACTORY(f), 300);
 
-        // 프로토콜: 디버깅 편의상 TCP|UDP_MCAST 모두 허용(운영에 맞춰 조정)
+        // 프로토콜/멀티캐스트 (운영 정책에 따라 조정)
         gst_rtsp_media_factory_set_protocols(GST_RTSP_MEDIA_FACTORY(f),
-            ( GST_RTSP_LOWER_TRANS_UDP_MCAST));
+            (GST_RTSP_LOWER_TRANS_UDP_MCAST));
         gst_rtsp_media_factory_set_multicast_iface(GST_RTSP_MEDIA_FACTORY(f), g_server_ip.c_str());
 
-        const int base_octet = 11 + stream_index;
-        const int base_port = 15000 + stream_index * 20;
+        // 멀티캐스트 주소/포트 풀 (예시: 239.255.10.(11+N), base_port=15000+N*20)
+        const int base_octet = 11 + stream_index_1based;
+        const int base_port = 15000 + stream_index_1based * 20;
         std::ostringstream ip; ip << "239.255.10." << base_octet;
         GstRTSPAddressPool* pool = gst_rtsp_address_pool_new();
         gst_rtsp_address_pool_add_range(pool, ip.str().c_str(), ip.str().c_str(), base_port, base_port + 19, 16);
@@ -518,49 +703,104 @@ namespace GStreamerWrapper {
         return GST_RTSP_MEDIA_FACTORY(f);
     }
 
+    /* ---------- init / configure / start / cleanup ---------- */
     static void initialize_gstreamer(int* argc, char*** argv, RtspServerContext* ctx) {
         gst_init(argc, argv);
         ctx->loop = g_main_loop_new(NULL, FALSE);
-        ctx->server = gst_rtsp_server_new();
-        gst_rtsp_server_set_address(ctx->server, g_server_ip.c_str());
-        gst_rtsp_server_set_service(ctx->server, "10554");
+        ctx->main_ctx = g_main_loop_get_context(ctx->loop); // shared context
 
-        if (GstRTSPSessionPool* pool = gst_rtsp_server_get_session_pool(ctx->server)) {
-            gst_rtsp_session_pool_set_max_sessions(pool, 8);
-            g_object_unref(pool);
-        }
+        // 공유 ThreadPool 생성 (환경에 맞게 8~32)
+        ctx->thread_pool = gst_rtsp_thread_pool_new();
+        gst_rtsp_thread_pool_set_max_threads(ctx->thread_pool, 32);
 
-        g_signal_connect(ctx->server, "client-connected", G_CALLBACK(client_connected_callback), ctx);
-        ctx->mounts = gst_rtsp_server_get_mount_points(ctx->server);
+        // 공유 SessionPool 생성
+        ctx->session_pool = gst_rtsp_session_pool_new();
+        gst_rtsp_session_pool_set_max_sessions(ctx->session_pool, 32);
     }
 
     static void configure_rtsp_server(RtspServerContext* ctx) {
         ctx->factories.reserve(g_configs.size());
+        ctx->servers.reserve(g_configs.size());
+
         for (size_t i = 0; i < g_configs.size(); ++i) {
-            GstRTSPMediaFactory* f = create_factory_from_config(g_configs[i], static_cast<int>(i));
+            const auto& cfg = g_configs[i];
+
+            // 1) 팩토리 생성
+            GstRTSPMediaFactory* f = create_factory_from_config(cfg, static_cast<int>(i + 1));
             ctx->factories.push_back(f);
-            std::ostringstream mount; mount << "/screen" << (i + 1);
-            gst_rtsp_mount_points_add_factory(ctx->mounts, mount.str().c_str(), f);
-            g_print("  - mount: rtsp://%s:10554%s\n", g_server_ip.c_str(), mount.str().c_str());
+
+            // 2) 스트림별 서버 생성
+            ServerEntry se;
+            se.server = gst_rtsp_server_new();
+            se.service_port = (cfg.port > 0 ? cfg.port : 10554);
+
+            // 공유 pool 지정
+            gst_rtsp_server_set_thread_pool(se.server, ctx->thread_pool);
+            gst_rtsp_server_set_session_pool(se.server, ctx->session_pool);
+
+            gst_rtsp_server_set_address(se.server, g_server_ip.c_str());
+
+            char svc[16] = { 0 };
+            _snprintf_s(svc, _TRUNCATE, "%d", se.service_port);
+            gst_rtsp_server_set_service(se.server, svc);
+
+            g_signal_connect(se.server, "client-connected", G_CALLBACK(client_connected_callback), ctx);
+
+            // 3) 마운트
+            se.mounts = gst_rtsp_server_get_mount_points(se.server);
+            std::ostringstream mount; mount << "/screen" << (cfg.port - 10553);
+            gst_rtsp_mount_points_add_factory(se.mounts, mount.str().c_str(), f);
+
+            ctx->servers.push_back(se);
+
+            g_print("  - mount: rtsp://%s:%d%s\n",
+                g_server_ip.c_str(), se.service_port, mount.str().c_str());
         }
     }
 
     static bool start_rtsp_server(RtspServerContext* ctx) {
-        ctx->server_source_id = gst_rtsp_server_attach(ctx->server, NULL);
-        if (ctx->server_source_id == 0) { g_printerr("RTSP 서버 attach 실패\n"); return false; }
-        g_print("RTSP 서버가 시작되었습니다. 예: rtsp://%s:10554/screen1\n", g_server_ip.c_str());
+        // 모든 서버를 공유 GLib 컨텍스트에 attach
+        for (auto& se : ctx->servers) {
+            se.source_id = gst_rtsp_server_attach(se.server, ctx->main_ctx);
+            if (se.source_id == 0) {
+                g_printerr("RTSP 서버 attach 실패 (port=%d)\n", se.service_port);
+                return false;
+            }
+            g_print("RTSP 서버가 시작되었습니다. 예: rtsp://%s:%d/screen1\n",
+                g_server_ip.c_str(), se.service_port);
+        }
         g_main_loop_run(ctx->loop);
         return true;
     }
 
     static void cleanup_resources(RtspServerContext* ctx) {
         g_print("5. 리소스 해제...\n");
-        if (ctx->server_source_id != 0) { g_source_remove(ctx->server_source_id); ctx->server_source_id = 0; }
-        if (ctx->mounts)  g_object_unref(ctx->mounts);
-        for (auto* f : ctx->factories) { if (f) g_object_unref(f); }
-        if (ctx->server)  g_object_unref(ctx->server);
-        if (ctx->loop)    g_main_loop_unref(ctx->loop);
-        ctx->loop = NULL; ctx->server = NULL; ctx->mounts = NULL; ctx->factories.clear();
+
+        // detach
+        for (auto& se : ctx->servers) {
+            if (se.source_id != 0) {
+                g_source_remove(se.source_id);
+                se.source_id = 0;
+            }
+        }
+        // mounts/server unref
+        for (auto& se : ctx->servers) {
+            if (se.mounts) { g_object_unref(se.mounts); se.mounts = NULL; }
+            if (se.server) { g_object_unref(se.server); se.server = NULL; }
+        }
+        ctx->servers.clear();
+
+        // factory unref
+        for (auto* f : ctx->factories) {
+            if (f) g_object_unref(f);
+        }
+        ctx->factories.clear();
+
+        // 공유 풀/루프 해제
+        if (ctx->thread_pool) { g_object_unref(ctx->thread_pool);  ctx->thread_pool = NULL; }
+        if (ctx->session_pool) { g_object_unref(ctx->session_pool); ctx->session_pool = NULL; }
+        if (ctx->loop) { g_main_loop_unref(ctx->loop);      ctx->loop = NULL; }
+        ctx->main_ctx = NULL;
     }
 
     /* ---------- API ---------- */
@@ -582,16 +822,19 @@ namespace GStreamerWrapper {
     }
 
     void StopScreenCaptureRtspServer() {
-        if (g_ctx.server) {
-            gst_rtsp_server_client_filter(g_ctx.server, force_client_disconnect, NULL);
-            if (GstRTSPSessionPool* pool = gst_rtsp_server_get_session_pool(g_ctx.server)) {
-                gst_rtsp_session_pool_cleanup(pool);
-                g_object_unref(pool);
+        // 모든 서버의 클라이언트를 끊고 세션 풀을 정리
+        for (auto& se : g_ctx.servers) {
+            if (se.server) {
+                gst_rtsp_server_client_filter(se.server, force_client_disconnect, NULL);
             }
         }
+        if (g_ctx.session_pool) {
+            gst_rtsp_session_pool_cleanup(g_ctx.session_pool);
+        }
+        // 메인루프 종료
         if (g_ctx.loop) {
             g_main_loop_quit(g_ctx.loop);
-            if (GMainContext* c = g_main_loop_get_context(g_ctx.loop)) g_main_context_wakeup(c);
+            if (g_ctx.main_ctx) g_main_context_wakeup(g_ctx.main_ctx);
         }
         if (g_server_thread.joinable()) g_server_thread.join();
     }

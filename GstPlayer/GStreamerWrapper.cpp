@@ -23,6 +23,7 @@ namespace GStreamerWrapper {
     void GstPlayer::Initialize()
     {
         gst_init(nullptr, nullptr);
+        //gst_debug_set_default_threshold(GST_LEVEL_INFO);
     }
     static GstBusSyncReply BusSyncHandler(GstBus* bus, GstMessage* msg, gpointer data)
     {
@@ -35,7 +36,7 @@ namespace GStreamerWrapper {
             gst_video_overlay_set_window_handle(overlay, (guintptr)player->videoHwnd);
 
             // 이 메시지는 우리가 처리했으므로 다른 핸들러로 전달하지 않고 버립니다.
-            gst_message_unref(msg);
+            //gst_message_unref(msg);
             return GST_BUS_DROP;
         }
 
@@ -150,6 +151,7 @@ namespace GStreamerWrapper {
             ncfg.width = cfg.Width;
             ncfg.height = cfg.Height;
             ncfg.framerate = cfg.Framerate;
+			ncfg.port = cfg.Port;
             ncfg.bitrate_kbps = cfg.BitrateKbps;
             ncfg.keyframe_interval = cfg.KeyframeInterval;
             ncfg.enable_audio = cfg.EnableAudio;
@@ -161,6 +163,8 @@ namespace GStreamerWrapper {
                 ncfg.profile = msclr::interop::marshal_as<std::string>(cfg.Profile);
             if (cfg.BitrateControl != nullptr)
                 ncfg.bitrate_control = msclr::interop::marshal_as<std::string>(cfg.BitrateControl);
+            if (cfg.OsdText != nullptr)
+                 ncfg.overlay_text = msclr::interop::marshal_as<std::string>(cfg.OsdText);
             nativeConfigs.push_back(ncfg);
         }
 

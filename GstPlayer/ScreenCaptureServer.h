@@ -18,12 +18,14 @@ struct StreamConfigNative {
     int framerate;
     int bitrate_kbps;
     int keyframe_interval;
+    int port;
     bool enable_audio;
     std::string audio_device;
     bool enable_hw_accel;
     bool enable_osd;
     std::string bitrate_control;
     std::string profile;
+    std::string overlay_text;
 };
 
 // Starts the RTSP screen capture server on a background thread hosting
