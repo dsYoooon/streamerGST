@@ -14,6 +14,7 @@
 #include <iostream>
 #include <thread>
 #include <cstdio>
+#include <mutex>
 
 #include "ScreenCaptureServer.h"
 
@@ -44,6 +45,7 @@ namespace GStreamerWrapper {
 
     static RtspServerContext g_ctx;
     static std::thread g_server_thread;
+    static std::mutex g_pipeline_build_mutex;
 
     /* ---------- small utils ---------- */
     static gboolean element_has_property(GstElement* e, const char* name) {
@@ -175,6 +177,41 @@ namespace GStreamerWrapper {
         gst_rtsp_client_close(client);
         return GST_RTSP_FILTER_REMOVE;
     }
+
+    typedef struct _MyRtspMedia {
+        GstRTSPMedia parent;
+    } MyRtspMedia;
+
+    typedef struct _MyRtspMediaClass {
+        GstRTSPMediaClass parent_class;
+    } MyRtspMediaClass;
+
+    G_DEFINE_TYPE(MyRtspMedia, my_rtsp_media, GST_TYPE_RTSP_MEDIA)
+
+    static gboolean my_rtsp_media_prepare(GstRTSPMedia* media, GstRTSPMediaPrepareFlags flags) {
+        std::unique_lock<std::mutex> lock(g_pipeline_build_mutex);
+        GstRTSPMediaClass* parent_class = GST_RTSP_MEDIA_CLASS(my_rtsp_media_parent_class);
+        if (parent_class->prepare) {
+            return parent_class->prepare(media, flags);
+        }
+        return TRUE;
+    }
+
+    static void my_rtsp_media_unprepare(GstRTSPMedia* media) {
+        std::unique_lock<std::mutex> lock(g_pipeline_build_mutex);
+        GstRTSPMediaClass* parent_class = GST_RTSP_MEDIA_CLASS(my_rtsp_media_parent_class);
+        if (parent_class->unprepare) {
+            parent_class->unprepare(media);
+        }
+    }
+
+    static void my_rtsp_media_class_init(MyRtspMediaClass* klass) {
+        GstRTSPMediaClass* media_class = GST_RTSP_MEDIA_CLASS(klass);
+        media_class->prepare = my_rtsp_media_prepare;
+        media_class->unprepare = my_rtsp_media_unprepare;
+    }
+
+    static void my_rtsp_media_init(MyRtspMedia*) {}
 
     /* ---------- custom factory ---------- */
     typedef struct _MyMediaFactory {
@@ -535,6 +572,12 @@ namespace GStreamerWrapper {
     }
 
     /* ---------- finalize ---------- */
+    static void my_media_factory_constructed(GObject* object) {
+        if (G_OBJECT_CLASS(my_media_factory_parent_class)->constructed) {
+            G_OBJECT_CLASS(my_media_factory_parent_class)->constructed(object);
+        }
+        gst_rtsp_media_factory_set_media_gtype(GST_RTSP_MEDIA_FACTORY(object), MY_TYPE_RTSP_MEDIA);
+    }
     static void my_media_factory_finalize(GObject* object) {
         MyMediaFactory* self = (MyMediaFactory*)object;
         if (self->overlay_elem) {
@@ -551,6 +594,7 @@ namespace GStreamerWrapper {
         GstRTSPMediaFactoryClass* mklass = GST_RTSP_MEDIA_FACTORY_CLASS(klass);
         mklass->create_element = my_media_factory_create_element;
         GObjectClass* gklass = G_OBJECT_CLASS(klass);
+        gklass->constructed = my_media_factory_constructed;
         gklass->finalize = my_media_factory_finalize;
     }
     static void my_media_factory_init(MyMediaFactory* self) {
