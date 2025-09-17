@@ -738,8 +738,9 @@ namespace GStreamerWrapper {
             });
     }
 
-    void StopScreenCaptureRtspServer() {
-        // 모든 서버의 클라이언트를 끊고 세션 풀을 정리
+    // g_main_context_invoke()로 호출되어 RTSP 서버 쓰레드에서만 실행됩니다.
+    static gboolean stop_server_on_main_loop(gpointer /*user_data*/)
+    {
         for (auto& se : g_ctx.servers) {
             if (se.server) {
                 gst_rtsp_server_client_filter(se.server, force_client_disconnect, NULL);
@@ -748,12 +749,35 @@ namespace GStreamerWrapper {
         if (g_ctx.session_pool) {
             gst_rtsp_session_pool_cleanup(g_ctx.session_pool);
         }
-        // 메인루프 종료
         if (g_ctx.loop) {
             g_main_loop_quit(g_ctx.loop);
-            if (g_ctx.main_ctx) g_main_context_wakeup(g_ctx.main_ctx);
         }
-        if (g_server_thread.joinable()) g_server_thread.join();
+
+        return G_SOURCE_REMOVE;
+    }
+
+    void StopScreenCaptureRtspServer() {
+        if (!g_server_thread.joinable()) {
+            return;
+        }
+
+        if (g_ctx.main_ctx) {
+            g_main_context_invoke_full(
+                g_ctx.main_ctx,
+                G_PRIORITY_HIGH,
+                stop_server_on_main_loop,
+                NULL,
+                NULL);
+
+            g_main_context_wakeup(g_ctx.main_ctx);
+        }
+        else if (g_ctx.loop) {
+            g_main_loop_quit(g_ctx.loop);
+        }
+
+        if (g_server_thread.joinable()) {
+            g_server_thread.join();
+        }
     }
 
 } // namespace GStreamerWrapper
