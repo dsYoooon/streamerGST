@@ -46,107 +46,126 @@ namespace GStreamerWrapper {
     static std::thread g_server_thread;
 
     /* ---------- small utils ---------- */
-    static gboolean element_has_property(GstElement* e, const char* name) {
-        if (!e || !name) return FALSE;
-        GObjectClass* klass = G_OBJECT_GET_CLASS(e);
-        return g_object_class_find_property(klass, name) != NULL;
-    }
-    static void set_int_if(GstElement* e, const char* name, int v) {
-        if (element_has_property(e, name)) g_object_set(e, name, v, NULL);
-    }
-    static void set_bool_if(GstElement* e, const char* name, gboolean v) {
-        if (element_has_property(e, name)) g_object_set(e, name, v, NULL);
+    static GParamSpec* find_property(GObject* obj, const char* name) {
+        if (!obj || !name) return NULL;
+        return g_object_class_find_property(G_OBJECT_GET_CLASS(obj), name);
     }
 
-    // === NEW: type-safe setter for string/enum properties ====================
-    static gboolean set_str_or_enum_if(GstElement* e, const char* prop, const char* value)
-    {
-        if (!e || !prop || !value) return FALSE;
-        GObjectClass* klass = G_OBJECT_GET_CLASS(e);
-        GParamSpec* pspec = g_object_class_find_property(klass, prop);
+    static gboolean set_integral_property(GObject* obj, const char* name, gint64 value) {
+        GParamSpec* pspec = find_property(obj, name);
         if (!pspec) return FALSE;
 
-        GType vt = G_PARAM_SPEC_VALUE_TYPE(pspec);
+        GType type = G_PARAM_SPEC_VALUE_TYPE(pspec);
+        GValue gv = G_VALUE_INIT;
 
-        // (1) String
-        if (vt == G_TYPE_STRING) {
-            g_object_set(e, prop, value, NULL);
-            return TRUE;
+        switch (type) {
+        case G_TYPE_BOOLEAN:
+            g_value_init(&gv, G_TYPE_BOOLEAN);
+            g_value_set_boolean(&gv, value != 0);
+            break;
+        case G_TYPE_INT: {
+            g_value_init(&gv, G_TYPE_INT);
+            gint v = value < G_MININT ? G_MININT : (value > G_MAXINT ? G_MAXINT : static_cast<gint>(value));
+            g_value_set_int(&gv, v);
+            break;
+        }
+        case G_TYPE_UINT: {
+            g_value_init(&gv, G_TYPE_UINT);
+            guint v = 0u;
+            if (value > 0) {
+                guint64 tmp = static_cast<guint64>(value);
+                v = tmp > G_MAXUINT ? G_MAXUINT : static_cast<guint>(tmp);
+            }
+            g_value_set_uint(&gv, v);
+            break;
+        }
+        case G_TYPE_LONG: {
+            g_value_init(&gv, G_TYPE_LONG);
+            glong v = value < G_MINLONG ? G_MINLONG : (value > G_MAXLONG ? G_MAXLONG : static_cast<glong>(value));
+            g_value_set_long(&gv, v);
+            break;
+        }
+        case G_TYPE_ULONG: {
+            g_value_init(&gv, G_TYPE_ULONG);
+            guint64 tmp = value < 0 ? 0u : static_cast<guint64>(value);
+            gulong v = tmp > G_MAXULONG ? G_MAXULONG : static_cast<gulong>(tmp);
+            g_value_set_ulong(&gv, v);
+            break;
+        }
+        case G_TYPE_INT64:
+            g_value_init(&gv, G_TYPE_INT64);
+            g_value_set_int64(&gv, static_cast<gint64>(value));
+            break;
+        case G_TYPE_UINT64: {
+            g_value_init(&gv, G_TYPE_UINT64);
+            guint64 v = value < 0 ? 0u : static_cast<guint64>(value);
+            g_value_set_uint64(&gv, v);
+            break;
+        }
+        case G_TYPE_ENUM:
+            g_value_init(&gv, G_TYPE_ENUM);
+            g_value_set_enum(&gv, static_cast<gint>(value));
+            break;
+        case G_TYPE_FLAGS:
+            g_value_init(&gv, G_TYPE_FLAGS);
+            g_value_set_flags(&gv, static_cast<guint>(value));
+            break;
+        case G_TYPE_CHAR: {
+            g_value_init(&gv, G_TYPE_CHAR);
+            gint64 bounded = value < G_MININT8 ? G_MININT8 : (value > G_MAXINT8 ? G_MAXINT8 : value);
+            g_value_set_schar(&gv, static_cast<gint8>(bounded));
+            break;
+        }
+        case G_TYPE_UCHAR: {
+            g_value_init(&gv, G_TYPE_UCHAR);
+            guint64 tmp = value < 0 ? 0u : static_cast<guint64>(value);
+            guchar v = tmp > G_MAXUINT8 ? G_MAXUINT8 : static_cast<guchar>(tmp);
+            g_value_set_uchar(&gv, v);
+            break;
+        }
+        default:
+            return FALSE;
         }
 
-        // (2) Enum: try nick/name (case-insensitive)
-        if (g_type_is_a(vt, G_TYPE_ENUM)) {
-            GEnumClass* ec = (GEnumClass*)g_type_class_ref(vt);
-            if (!ec) return FALSE;
-
-            // direct match: nick or name
-            gint chosen = G_MININT;
-            for (guint i = 0; i < ec->n_values; ++i) {
-                const GEnumValue* ev = &ec->values[i];
-                if ((ev->value_nick && g_ascii_strcasecmp(ev->value_nick, value) == 0) ||
-                    (ev->value_name && g_ascii_strcasecmp(ev->value_name, value) == 0)) {
-                    chosen = ev->value;
-                    break;
-                }
-            }
-
-            // fallback aliases for common vendor props
-            if (chosen == G_MININT) {
-                // nvh264enc preset aliases
-                if (g_ascii_strcasecmp(prop, "preset") == 0) {
-                    if (!g_ascii_strcasecmp(value, "llhq") || !g_ascii_strcasecmp(value, "low-latency-hq")) {
-                        // try to find "llhq"
-                        for (guint i = 0; i < ec->n_values; ++i)
-                            if (ec->values[i].value_nick && g_ascii_strcasecmp(ec->values[i].value_nick, "llhq") == 0)
-                            {
-                                chosen = ec->values[i].value; break;
-                            }
-                    }
-                    else if (!g_ascii_strcasecmp(value, "llhp") || !g_ascii_strcasecmp(value, "low-latency-hp")) {
-                        for (guint i = 0; i < ec->n_values; ++i)
-                            if (ec->values[i].value_nick && g_ascii_strcasecmp(ec->values[i].value_nick, "llhp") == 0)
-                            {
-                                chosen = ec->values[i].value; break;
-                            }
-                    }
-                }
-
-                // rc-mode / rate-control: cbr/vbr → enum
-                if (chosen == G_MININT &&
-                    (!g_ascii_strcasecmp(prop, "rc-mode") || !g_ascii_strcasecmp(prop, "rate-control"))) {
-                    const char* want = (g_ascii_strcasecmp(value, "vbr") == 0) ? "vbr" : "cbr";
-                    for (guint i = 0; i < ec->n_values; ++i) {
-                        if (ec->values[i].value_nick && g_ascii_strcasecmp(ec->values[i].value_nick, want) == 0) {
-                            chosen = ec->values[i].value; break;
-                        }
-                    }
-                }
-
-                // amfenc_h264 usage: ultra-low-latency
-                if (chosen == G_MININT && !g_ascii_strcasecmp(prop, "usage")) {
-                    // try exact nick if exists, else map to something closest
-                    for (guint i = 0; i < ec->n_values; ++i) {
-                        if (ec->values[i].value_nick &&
-                            (g_ascii_strcasecmp(ec->values[i].value_nick, "ultra-low-latency") == 0 ||
-                                g_ascii_strcasecmp(ec->values[i].value_nick, "ultralowlatency") == 0)) {
-                            chosen = ec->values[i].value; break;
-                        }
-                    }
-                }
-            }
-
-            gboolean ok = FALSE;
-            if (chosen != G_MININT) {
-                g_object_set(e, prop, chosen, NULL);
-                ok = TRUE;
-            }
-            g_type_class_unref(ec);
-            return ok;
-        }
-
-        // (3) Otherwise: do not touch (prevents varargs UB)
-        return FALSE;
+        g_object_set_property(obj, name, &gv);
+        g_value_unset(&gv);
+        return TRUE;
     }
+
+    static gboolean set_real_property(GObject* obj, const char* name, gdouble value) {
+        GParamSpec* pspec = find_property(obj, name);
+        if (!pspec) return FALSE;
+
+        GType type = G_PARAM_SPEC_VALUE_TYPE(pspec);
+        GValue gv = G_VALUE_INIT;
+
+        if (type == G_TYPE_DOUBLE) {
+            g_value_init(&gv, G_TYPE_DOUBLE);
+            g_value_set_double(&gv, value);
+        }
+        else if (type == G_TYPE_FLOAT) {
+            g_value_init(&gv, G_TYPE_FLOAT);
+            g_value_set_float(&gv, static_cast<gfloat>(value));
+        }
+        else {
+            return FALSE;
+        }
+
+        g_object_set_property(obj, name, &gv);
+        g_value_unset(&gv);
+        return TRUE;
+    }
+
+    static void set_int_if(GstElement* e, const char* name, gint64 v) {
+        if (e) set_integral_property(G_OBJECT(e), name, v);
+    }
+    static void set_bool_if(GstElement* e, const char* name, gboolean v) {
+        if (e) set_integral_property(G_OBJECT(e), name, v ? 1 : 0);
+    }
+    static void set_double_if(GstElement* e, const char* name, gdouble v) {
+        if (e) set_real_property(G_OBJECT(e), name, v);
+    }
+
     // ========================================================================
     // ===== [추가] 안전한 프로퍼티 세터들 =====
     static gboolean set_property_enum_by_nick(GObject* obj, const char* prop, const char* nick_or_name) {
@@ -202,13 +221,45 @@ namespace GStreamerWrapper {
         return FALSE; // 다른 타입은 건드리지 않음
     }
 
+    // enum/string 프로퍼티에 대한 안전한 세터 + 별칭 처리
+    static gboolean set_str_or_enum_if(GObject* obj, const char* prop, const char* value)
+    {
+        if (!obj || !prop || !value || !*value) return FALSE;
+
+        if (set_property_string_or_enum(obj, prop, value))
+            return TRUE;
+
+        // preset 별칭 (NV 인코더 등)
+        if (!g_ascii_strcasecmp(prop, "preset")) {
+            if (!g_ascii_strcasecmp(value, "llhq") || !g_ascii_strcasecmp(value, "low-latency-hq"))
+                return set_property_string_or_enum(obj, prop, "llhq");
+            if (!g_ascii_strcasecmp(value, "llhp") || !g_ascii_strcasecmp(value, "low-latency-hp"))
+                return set_property_string_or_enum(obj, prop, "llhp");
+        }
+
+        // rate-control / rc-mode → cbr/vbr 정규화
+        if (!g_ascii_strcasecmp(prop, "rc-mode") || !g_ascii_strcasecmp(prop, "rate-control")) {
+            const char* nick = (g_ascii_strcasecmp(value, "vbr") == 0) ? "vbr" : "cbr";
+            if (set_property_string_or_enum(obj, prop, nick))
+                return TRUE;
+        }
+
+        // usage 별칭 (AMF 등)
+        if (!g_ascii_strcasecmp(prop, "usage")) {
+            if (!g_ascii_strcasecmp(value, "ultra-low-latency") || !g_ascii_strcasecmp(value, "ultralowlatency"))
+                return set_property_string_or_enum(obj, prop, "ultra-low-latency");
+        }
+
+        return FALSE;
+    }
+
     // (옵션) enum nick 세팅이 실패하면 숫자 fallback 도 시도하는 헬퍼
     static void set_rc_with_fallback(GObject* obj, const char* prop, const char* rc_nick,
         int vbr_val /*e.g., 0*/, int cbr_val /*e.g., 1*/) {
         if (!set_property_string_or_enum(obj, prop, rc_nick)) {
             // enum nick을 못 찾으면 값으로 시도 (플러그인마다 값이 다를 수 있어 프로젝트별로 맞춰주세요)
             int v = (g_ascii_strcasecmp(rc_nick, "vbr") == 0) ? vbr_val : cbr_val;
-            g_object_set(obj, prop, v, NULL);
+            set_integral_property(obj, prop, v);
         }
     }
 
@@ -312,8 +363,8 @@ namespace GStreamerWrapper {
         const gchar* rc_nick = (g_ascii_strcasecmp(rc, "VBR") == 0) ? "vbr" : "cbr";
 
         if (g_strcmp0(fname, "x264enc") == 0) {
-            set_int_if(elem, "speed-preset", 1 /*ultrafast*/);
-            set_int_if(elem, "tune", 0x00000004 /*zerolatency*/);
+            set_property_string_or_enum(G_OBJECT(elem), "speed-preset", "ultrafast");
+            set_property_string_or_enum(G_OBJECT(elem), "tune", "zerolatency");
             set_bool_if(elem, "byte-stream", TRUE);
             // 일부 빌드에서 kbps 단위일 수 있어 재설정
             set_int_if(elem, "bitrate", mf->v_bitrate_kbps);
@@ -418,11 +469,13 @@ namespace GStreamerWrapper {
             gst_bin_add_many(GST_BIN(bin), vsrc, /*vd3d X*/ /*tover X*/ vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
 
         // 캡처 기본 설정
-        g_object_set(vsrc,
-            "monitor-index", monitor_index, "show-cursor", TRUE,
-            "crop-x", crop_x, "crop-y", crop_y, "crop-width", crop_w, "crop-height", crop_h,
-            "capture-api",0,
-            NULL);
+        set_int_if(vsrc, "monitor-index", monitor_index);
+        set_bool_if(vsrc, "show-cursor", TRUE);
+        set_int_if(vsrc, "crop-x", crop_x);
+        set_int_if(vsrc, "crop-y", crop_y);
+        set_int_if(vsrc, "crop-width", crop_w);
+        set_int_if(vsrc, "crop-height", crop_h);
+        set_int_if(vsrc, "capture-api", 0);
 
         // 1) OSD 경로: BGRA로 변환 후 overlay
         GstElement* prev = vsrc;
@@ -434,15 +487,19 @@ namespace GStreamerWrapper {
             if (!link_ok(vsrc, vd3d, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
 
             const gchar* txt = (self->overlay_text && *self->overlay_text) ? self->overlay_text : "";
-            g_object_set(tover,
-                "text", txt,
-                "font-family", "Segoe UI",
-                "font-size", 20.0,     // gdouble
-                "layout-x", 0.03, "layout-y", 0.03, "layout-width", 0.94, "layout-height", 0.94,
-                "text-alignment", 0, "paragraph-alignment", 0,
-                "foreground-color", 0xFFFFFFFFu, "background-color", 0x00000000u,
-                "outline-color", 0x80000000u, "shadow-color", 0x80000000u,
-                NULL);
+            set_property_string_or_enum(G_OBJECT(tover), "text", txt);
+            set_property_string_or_enum(G_OBJECT(tover), "font-family", "Segoe UI");
+            set_double_if(tover, "font-size", 20.0);
+            set_double_if(tover, "layout-x", 0.03);
+            set_double_if(tover, "layout-y", 0.03);
+            set_double_if(tover, "layout-width", 0.94);
+            set_double_if(tover, "layout-height", 0.94);
+            set_int_if(tover, "text-alignment", 0);
+            set_int_if(tover, "paragraph-alignment", 0);
+            set_int_if(tover, "foreground-color", 0xFFFFFFFFu);
+            set_int_if(tover, "background-color", 0x00000000u);
+            set_int_if(tover, "outline-color", 0x80000000u);
+            set_int_if(tover, "shadow-color", 0x80000000u);
 
             self->overlay_elem = tover;
             g_object_add_weak_pointer(G_OBJECT(tover), (gpointer*)&self->overlay_elem);
@@ -517,22 +574,20 @@ namespace GStreamerWrapper {
             }
             else {
                 // 소프트웨어 x264enc 세팅
-                g_object_set(venc,
-                    "bitrate", self->v_bitrate_kbps,     // x264: kbps
-                    "key-int-max", keyint,
-                    "gop-size", keyint,
-                    "speed-preset", 1 /*ultrafast*/,
-                    "tune", 0x00000004 /*zerolatency*/,
-                    "byte-stream", TRUE,
-                    NULL);
-                set_str_or_enum_if(venc, "profile", self->profile ? self->profile : "high");
+                set_int_if(venc, "bitrate", self->v_bitrate_kbps);      // x264: kbps 단위
+                set_int_if(venc, "key-int-max", keyint);
+                set_int_if(venc, "gop-size", keyint);
+                set_property_string_or_enum(G_OBJECT(venc), "speed-preset", "ultrafast");
+                set_property_string_or_enum(G_OBJECT(venc), "tune", "zerolatency");
+                set_bool_if(venc, "byte-stream", TRUE);
+                set_str_or_enum_if(G_OBJECT(venc), "profile", self->profile ? self->profile : "high");
                 if (!gst_element_link(vq1, venc)) { gst_object_unref(bin); return NULL; }
             }
         }
 
         // 파서 경로 (기본)
         gboolean linked_after_enc = FALSE;
-        g_object_set(vparse, "config-interval", 1, NULL);
+        set_int_if(vparse, "config-interval", 1);
         if (self->enable_hw_accel && NO_PARSE_HW) {
             if (link_ok(venc, vcf)) {
                 linked_after_enc = TRUE;
@@ -554,11 +609,20 @@ namespace GStreamerWrapper {
             gst_caps_unref(paycaps);
         }
         // queue 튜닝: 얕되 약간의 여유
-        g_object_set(vq1, "leaky", 2, "max-size-buffers", 15, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
-        g_object_set(vq2, "leaky", 2, "max-size-buffers", 8, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
+        set_int_if(vq1, "leaky", 2);
+        set_int_if(vq1, "max-size-buffers", 15);
+        set_int_if(vq1, "max-size-bytes", 0);
+        set_int_if(vq1, "max-size-time", 0);
+
+        set_int_if(vq2, "leaky", 2);
+        set_int_if(vq2, "max-size-buffers", 8);
+        set_int_if(vq2, "max-size-bytes", 0);
+        set_int_if(vq2, "max-size-time", 0);
 
         // MTU 1200 (조각화 회피)
-        g_object_set(vpay, "pt", 96, "config-interval", 1, "mtu", 1200, NULL);
+        set_int_if(vpay, "pt", 96);
+        set_int_if(vpay, "config-interval", 1);
+        set_int_if(vpay, "mtu", 1200);
 
         if (!link_ok(vcf, vq2)) { gst_object_unref(bin); return NULL; }
         if (!link_ok(vq2, vpay)) { gst_object_unref(bin); return NULL; }
@@ -581,16 +645,19 @@ namespace GStreamerWrapper {
             else {
                 gst_bin_add_many(GST_BIN(bin), asrc, aq1, aconv, ares, acaps, aq2, aenc, apay, NULL);
 
-                g_object_set(asrc,
-                    "loopback", TRUE,
-                    "do-timestamp", TRUE,
-                    "loopback-silence-on-device-mute", TRUE,
-                    NULL);
+                set_bool_if(asrc, "loopback", TRUE);
+                set_bool_if(asrc, "do-timestamp", TRUE);
+                set_bool_if(asrc, "loopback-silence-on-device-mute", TRUE);
 
-                g_object_set(aq1, "leaky", 2, "max-size-buffers", 20, "max-size-bytes", 0,
-                    "max-size-time", (gint64)0, NULL);
-                g_object_set(aq2, "leaky", 2, "max-size-buffers", 12, "max-size-bytes", 0,
-                    "max-size-time", (gint64)0, NULL);
+                set_int_if(aq1, "leaky", 2);
+                set_int_if(aq1, "max-size-buffers", 20);
+                set_int_if(aq1, "max-size-bytes", 0);
+                set_int_if(aq1, "max-size-time", 0);
+
+                set_int_if(aq2, "leaky", 2);
+                set_int_if(aq2, "max-size-buffers", 12);
+                set_int_if(aq2, "max-size-bytes", 0);
+                set_int_if(aq2, "max-size-time", 0);
 
                 GstCaps* a_caps = gst_caps_new_simple("audio/x-raw",
                     "format", G_TYPE_STRING, "S16LE",
@@ -599,13 +666,12 @@ namespace GStreamerWrapper {
                 g_object_set(acaps, "caps", a_caps, NULL);
                 gst_caps_unref(a_caps);
 
-                g_object_set(aenc,
-                    "bitrate", a_bps,
-                    "frame-size", 40,
-                    "inband-fec", TRUE,
-                    "packet-loss-percentage", 10,
-                    "complexity", 5, NULL);
-                g_object_set(apay, "pt", 97, NULL);
+                set_int_if(aenc, "bitrate", a_bps);
+                set_int_if(aenc, "frame-size", 40);
+                set_bool_if(aenc, "inband-fec", TRUE);
+                set_int_if(aenc, "packet-loss-percentage", 10);
+                set_int_if(aenc, "complexity", 5);
+                set_int_if(apay, "pt", 97);
 
                 if (!gst_element_link_many(asrc, aq1, aconv, ares, acaps, aq2, aenc, apay, NULL)) {
                     g_warning("오디오 파이프라인 연결 실패, 비디오만 스트리밍합니다.");
