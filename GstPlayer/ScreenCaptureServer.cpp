@@ -58,95 +58,6 @@ namespace GStreamerWrapper {
         if (element_has_property(e, name)) g_object_set(e, name, v, NULL);
     }
 
-    // === NEW: type-safe setter for string/enum properties ====================
-    static gboolean set_str_or_enum_if(GstElement* e, const char* prop, const char* value)
-    {
-        if (!e || !prop || !value) return FALSE;
-        GObjectClass* klass = G_OBJECT_GET_CLASS(e);
-        GParamSpec* pspec = g_object_class_find_property(klass, prop);
-        if (!pspec) return FALSE;
-
-        GType vt = G_PARAM_SPEC_VALUE_TYPE(pspec);
-
-        // (1) String
-        if (vt == G_TYPE_STRING) {
-            g_object_set(e, prop, value, NULL);
-            return TRUE;
-        }
-
-        // (2) Enum: try nick/name (case-insensitive)
-        if (g_type_is_a(vt, G_TYPE_ENUM)) {
-            GEnumClass* ec = (GEnumClass*)g_type_class_ref(vt);
-            if (!ec) return FALSE;
-
-            // direct match: nick or name
-            gint chosen = G_MININT;
-            for (guint i = 0; i < ec->n_values; ++i) {
-                const GEnumValue* ev = &ec->values[i];
-                if ((ev->value_nick && g_ascii_strcasecmp(ev->value_nick, value) == 0) ||
-                    (ev->value_name && g_ascii_strcasecmp(ev->value_name, value) == 0)) {
-                    chosen = ev->value;
-                    break;
-                }
-            }
-
-            // fallback aliases for common vendor props
-            if (chosen == G_MININT) {
-                // nvh264enc preset aliases
-                if (g_ascii_strcasecmp(prop, "preset") == 0) {
-                    if (!g_ascii_strcasecmp(value, "llhq") || !g_ascii_strcasecmp(value, "low-latency-hq")) {
-                        // try to find "llhq"
-                        for (guint i = 0; i < ec->n_values; ++i)
-                            if (ec->values[i].value_nick && g_ascii_strcasecmp(ec->values[i].value_nick, "llhq") == 0)
-                            {
-                                chosen = ec->values[i].value; break;
-                            }
-                    }
-                    else if (!g_ascii_strcasecmp(value, "llhp") || !g_ascii_strcasecmp(value, "low-latency-hp")) {
-                        for (guint i = 0; i < ec->n_values; ++i)
-                            if (ec->values[i].value_nick && g_ascii_strcasecmp(ec->values[i].value_nick, "llhp") == 0)
-                            {
-                                chosen = ec->values[i].value; break;
-                            }
-                    }
-                }
-
-                // rc-mode / rate-control: cbr/vbr → enum
-                if (chosen == G_MININT &&
-                    (!g_ascii_strcasecmp(prop, "rc-mode") || !g_ascii_strcasecmp(prop, "rate-control"))) {
-                    const char* want = (g_ascii_strcasecmp(value, "vbr") == 0) ? "vbr" : "cbr";
-                    for (guint i = 0; i < ec->n_values; ++i) {
-                        if (ec->values[i].value_nick && g_ascii_strcasecmp(ec->values[i].value_nick, want) == 0) {
-                            chosen = ec->values[i].value; break;
-                        }
-                    }
-                }
-
-                // amfenc_h264 usage: ultra-low-latency
-                if (chosen == G_MININT && !g_ascii_strcasecmp(prop, "usage")) {
-                    // try exact nick if exists, else map to something closest
-                    for (guint i = 0; i < ec->n_values; ++i) {
-                        if (ec->values[i].value_nick &&
-                            (g_ascii_strcasecmp(ec->values[i].value_nick, "ultra-low-latency") == 0 ||
-                                g_ascii_strcasecmp(ec->values[i].value_nick, "ultralowlatency") == 0)) {
-                            chosen = ec->values[i].value; break;
-                        }
-                    }
-                }
-            }
-
-            gboolean ok = FALSE;
-            if (chosen != G_MININT) {
-                g_object_set(e, prop, chosen, NULL);
-                ok = TRUE;
-            }
-            g_type_class_unref(ec);
-            return ok;
-        }
-
-        // (3) Otherwise: do not touch (prevents varargs UB)
-        return FALSE;
-    }
     // ========================================================================
     // ===== [추가] 안전한 프로퍼티 세터들 =====
     static gboolean set_property_enum_by_nick(GObject* obj, const char* prop, const char* nick_or_name) {
@@ -200,6 +111,38 @@ namespace GStreamerWrapper {
             return set_property_enum_by_nick(obj, prop, val);
         }
         return FALSE; // 다른 타입은 건드리지 않음
+    }
+
+    // enum/string 프로퍼티에 대한 안전한 세터 + 별칭 처리
+    static gboolean set_str_or_enum_if(GObject* obj, const char* prop, const char* value)
+    {
+        if (!obj || !prop || !value || !*value) return FALSE;
+
+        if (set_property_string_or_enum(obj, prop, value))
+            return TRUE;
+
+        // preset 별칭 (NV 인코더 등)
+        if (!g_ascii_strcasecmp(prop, "preset")) {
+            if (!g_ascii_strcasecmp(value, "llhq") || !g_ascii_strcasecmp(value, "low-latency-hq"))
+                return set_property_string_or_enum(obj, prop, "llhq");
+            if (!g_ascii_strcasecmp(value, "llhp") || !g_ascii_strcasecmp(value, "low-latency-hp"))
+                return set_property_string_or_enum(obj, prop, "llhp");
+        }
+
+        // rate-control / rc-mode → cbr/vbr 정규화
+        if (!g_ascii_strcasecmp(prop, "rc-mode") || !g_ascii_strcasecmp(prop, "rate-control")) {
+            const char* nick = (g_ascii_strcasecmp(value, "vbr") == 0) ? "vbr" : "cbr";
+            if (set_property_string_or_enum(obj, prop, nick))
+                return TRUE;
+        }
+
+        // usage 별칭 (AMF 등)
+        if (!g_ascii_strcasecmp(prop, "usage")) {
+            if (!g_ascii_strcasecmp(value, "ultra-low-latency") || !g_ascii_strcasecmp(value, "ultralowlatency"))
+                return set_property_string_or_enum(obj, prop, "ultra-low-latency");
+        }
+
+        return FALSE;
     }
 
     // (옵션) enum nick 세팅이 실패하면 숫자 fallback 도 시도하는 헬퍼
@@ -499,7 +442,7 @@ namespace GStreamerWrapper {
                     "tune", 0x00000004 /*zerolatency*/,
                     "byte-stream", TRUE,
                     NULL);
-                set_str_or_enum_if(venc, "profile", self->profile ? self->profile : "high");
+                set_str_or_enum_if(G_OBJECT(venc), "profile", self->profile ? self->profile : "high");
                 if (!gst_element_link(vq1, venc)) { gst_object_unref(bin); return NULL; }
             }
         }
