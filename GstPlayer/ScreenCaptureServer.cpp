@@ -212,31 +212,6 @@ namespace GStreamerWrapper {
         }
     }
 
-    /* ---------- rank control: enable_hw ? HW↑ : SW↑ ---------- */
-    static void set_encoder_ranks_by_option(bool enable_hw) {
-        GstRegistry* reg = gst_registry_get();
-        auto set_rank = [&](const char* name, gint rank) {
-            if (GstPluginFeature* f = gst_registry_find_feature(reg, name, GST_TYPE_ELEMENT_FACTORY)) {
-                gst_plugin_feature_set_rank(f, rank);
-                gst_object_unref(f);
-            }
-            };
-
-        if (enable_hw) {
-            set_rank("nvh264enc", GST_RANK_PRIMARY + 220);
-            set_rank("amfenc_h264", GST_RANK_PRIMARY + 210);
-            set_rank("qsvh264enc", GST_RANK_PRIMARY + 200);
-            set_rank("d3d11h264enc", GST_RANK_PRIMARY + 190);
-            set_rank("x264enc", GST_RANK_SECONDARY);
-        }
-        else {
-            set_rank("x264enc", GST_RANK_PRIMARY + 200);
-            set_rank("nvh264enc", GST_RANK_SECONDARY);
-            set_rank("amfenc_h264", GST_RANK_SECONDARY);
-            set_rank("qsvh264enc", GST_RANK_SECONDARY);
-            set_rank("d3d11h264enc", GST_RANK_SECONDARY);
-        }
-    }
 
     /* ---------- RTSP client callbacks (절대 g_object_unref 연결X) ---------- */
     static void client_closed_callback(GstRTSPClient* client, gpointer) {
@@ -378,7 +353,6 @@ namespace GStreamerWrapper {
         const gint a_bps = self->a_bitrate_bps;
         const gint keyint = self->keyint > 0 ? self->keyint : fps;
 
-        set_encoder_ranks_by_option(self->enable_hw_accel);
         g_print("[video] HW accel option: %s\n", self->enable_hw_accel ? "ON" : "OFF");
 
         GstElement* bin = gst_bin_new(NULL);
