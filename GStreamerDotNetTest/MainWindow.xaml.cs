@@ -38,7 +38,7 @@ namespace GStreamerDotNetTest
         {
             InitializeComponent();
         }
-
+        const int defaultStreamCount = 2;
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             try
@@ -68,7 +68,7 @@ namespace GStreamerDotNetTest
             // =================================================================
             // ★ 수정된 부분 1: 프로그램 시작 시 기본 스트림 4개로 UI 설정
             // =================================================================
-            const int defaultStreamCount = 4;
+            
             Textbox_numofstreamer.Text = defaultStreamCount.ToString();
             UpdateStreamTabs(defaultStreamCount);
             // =================================================================
@@ -93,29 +93,61 @@ namespace GStreamerDotNetTest
                     width = 1920;
                     height = 1080;
                 }
-
-                var cfg = new StreamConfig
+                if (i == 2 || i == 1)
                 {
-                    MonitorIndex = monitorIndex,
-                    CropX = 0,
-                    CropY = 0,
-                    CropW = width,
-                    CropH = height,
-                    Width = width,
-                    Height = height,
-                    Framerate = 30,
-                    BitrateKbps = 8000,
-                    KeyframeInterval = 30,
-                    Port = 10554 + i,
-                    EnableAudio = false,
-                    AudioDevice = (_audioDevices.Length > 0) ? _audioDevices[0] : null,
-                    EnableHardwareAccel = true,
-                    EnableOsd = true,
-                    BitrateControl = "CBR",
-                    Profile = "high",
-                    OsdText = $"Screen {i + 1}"
-                };
-                list.Add(cfg);
+                    var cfg = new StreamConfig
+                    {
+                        MonitorIndex = monitorIndex,
+                        CropX = 0,
+                        CropY = 0,
+                        CropW = width,
+                        CropH = height,
+                        Width = width,
+                        Height = height,
+                        Framerate = 30,
+                        BitrateKbps = 8000,
+                        KeyframeInterval = 30,
+                        Port = 10554 + i,
+                        EnableAudio = false,
+                        AudioDevice = (_audioDevices.Length > 0) ? _audioDevices[0] : null,
+                        EnableHardwareAccel = true,
+                        EnableOsd = true,
+                        
+                        BitrateControl = "CBR",
+                        Profile = "high",
+                        OsdText = $"Screen {i + 1}"
+                    };
+                    list.Add(cfg);
+                }
+                else
+                {
+                    var cfg = new StreamConfig
+                    {
+                        MonitorIndex = monitorIndex,
+                        CropX = 0,
+                        CropY = 0,
+                        CropW = width,
+                        CropH = height,
+                        Width = width,
+                        Height = height,
+                        Framerate = 30,
+                        BitrateKbps = 8000,
+                        KeyframeInterval = 30,
+                        Port = 10554 + i,
+                        EnableAudio = false,
+                        AudioDevice = (_audioDevices.Length > 0) ? _audioDevices[0] : null,
+                        EnableHardwareAccel = false,
+                        EnableOsd = true,
+                        BitrateControl = "CBR",
+                        Profile = "baseline",
+                        OsdText = $"Screen {i + 1}"
+                    };
+                    list.Add(cfg);
+                }
+                    
+                //if(i==2 || i==1)
+                //if (i != 2)
+                    
             }
             return list.ToArray();
         }
@@ -126,7 +158,7 @@ namespace GStreamerDotNetTest
             // =================================================================
             // ★ 수정된 부분 2: UI 설정 대신 기본 설정 값 사용
             // =================================================================
-            if (isFirst) _configs = CreateDefaultStreamConfigs(4);
+            if (isFirst) _configs = CreateDefaultStreamConfigs(defaultStreamCount);
             
             // =================================================================
 

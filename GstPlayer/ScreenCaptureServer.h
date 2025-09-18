@@ -20,6 +20,7 @@ struct StreamConfigNative {
     int keyframe_interval;
     int port;
     bool enable_audio;
+	bool enable_multicast;
     std::string audio_device;
     bool enable_hw_accel;
     bool enable_osd;

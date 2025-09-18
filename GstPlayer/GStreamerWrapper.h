@@ -27,6 +27,7 @@ namespace GStreamerWrapper {
         String^ AudioDevice;
         bool EnableHardwareAccel;
         bool EnableOsd;
+        bool EnableMultiCast;
         String^ BitrateControl;
         String^ Profile;
         String^ OsdText;

@@ -240,7 +240,7 @@ namespace GStreamerWrapper {
         gboolean enable_osd;
         gchar* bitrate_control;
         gchar* profile;
-
+        gboolean enable_multicast;
         // overlay
         gchar* overlay_text;
         GstElement* overlay_elem; // weak
@@ -384,7 +384,7 @@ namespace GStreamerWrapper {
         g_object_set(vsrc,
             "monitor-index", monitor_index, "show-cursor", TRUE,
             "crop-x", crop_x, "crop-y", crop_y, "crop-width", crop_w, "crop-height", crop_h,
-            "capture-api",0,
+            "capture-api",1,
             NULL);
 
         // 1) OSD 경로: BGRA로 변환 후 overlay
@@ -634,7 +634,7 @@ namespace GStreamerWrapper {
         f->enable_hw_accel = cfg.enable_hw_accel;
         f->enable_osd = cfg.enable_osd;
         f->keyint = cfg.keyframe_interval > 0 ? cfg.keyframe_interval : f->fps;
-
+        f->enable_multicast = cfg.enable_multicast;
         if (f->bitrate_control) g_free(f->bitrate_control);
         f->bitrate_control = g_strdup(cfg.bitrate_control.empty() ? "CBR" : cfg.bitrate_control.c_str());
 
@@ -657,11 +657,13 @@ namespace GStreamerWrapper {
         gst_rtsp_media_factory_set_latency(GST_RTSP_MEDIA_FACTORY(f), 300);
 
         // 프로토콜/멀티캐스트 (운영 정책에 따라 조정)
-        gst_rtsp_media_factory_set_protocols(GST_RTSP_MEDIA_FACTORY(f),
-            (GST_RTSP_LOWER_TRANS_UDP_MCAST));
-        gst_rtsp_media_factory_set_multicast_iface(GST_RTSP_MEDIA_FACTORY(f), g_server_ip.c_str());
+        if (f->enable_multicast) {
+            gst_rtsp_media_factory_set_protocols(GST_RTSP_MEDIA_FACTORY(f),
+                (GST_RTSP_LOWER_TRANS_UDP_MCAST));
+              gst_rtsp_media_factory_set_multicast_iface(GST_RTSP_MEDIA_FACTORY(f), g_server_ip.c_str());
+        
 
-        // 멀티캐스트 주소/포트 풀 (예시: 239.255.10.(11+N), base_port=15000+N*20)
+            // 멀티캐스트 주소/포트 풀 (예시: 239.255.10.(11+N), base_port=15000+N*20)
         const int base_octet = 11 + stream_index_1based;
         const int base_port = 15000 + stream_index_1based * 20;
         std::ostringstream ip; ip << "239.255.10." << base_octet;
@@ -669,6 +671,13 @@ namespace GStreamerWrapper {
         gst_rtsp_address_pool_add_range(pool, ip.str().c_str(), ip.str().c_str(), base_port, base_port + 19, 16);
         gst_rtsp_media_factory_set_address_pool(GST_RTSP_MEDIA_FACTORY(f), pool);
         g_object_unref(pool);
+        }
+        else {
+            gst_rtsp_media_factory_set_protocols(GST_RTSP_MEDIA_FACTORY(f),
+               (GstRTSPLowerTrans) (GST_RTSP_LOWER_TRANS_UDP | GST_RTSP_LOWER_TRANS_TCP));
+  
+        }
+      
 
         return GST_RTSP_MEDIA_FACTORY(f);
     }

@@ -29,7 +29,7 @@ namespace GStreamerWrapper {
     void GstPlayer::Initialize()
     {
         gst_init(nullptr, nullptr);
-        //gst_debug_set_default_threshold(GST_LEVEL_DEBUG);
+        gst_debug_set_default_threshold(GST_LEVEL_INFO);
     }
     static GstBusSyncReply BusSyncHandler(GstBus* bus, GstMessage* msg, gpointer data)
     {
@@ -111,6 +111,9 @@ namespace GStreamerWrapper {
         }
 
         if (devices->Count > 0) {
+            //return devices->ToArray();
+        }
+        else {
             return devices->ToArray();
         }
 
@@ -244,6 +247,7 @@ namespace GStreamerWrapper {
             ncfg.bitrate_kbps = cfg.BitrateKbps;
             ncfg.keyframe_interval = cfg.KeyframeInterval;
             ncfg.enable_audio = cfg.EnableAudio;
+			ncfg.enable_multicast = cfg.EnableMultiCast;
             if (cfg.AudioDevice != nullptr)
                 ncfg.audio_device = msclr::interop::marshal_as<std::string>(cfg.AudioDevice);
             ncfg.enable_hw_accel = cfg.EnableHardwareAccel;
