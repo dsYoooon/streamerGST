@@ -39,7 +39,7 @@ namespace GStreamerDotNetTest
             InitializeComponent();
         }
 
-        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             try
             {
@@ -57,7 +57,8 @@ namespace GStreamerDotNetTest
             _videoHost = new GstVideoHost();
             videoContainer.Child = _videoHost;
             _player = new GstPlayer(_videoHost.Handle);
-            _audioDevices = GstPlayer.GetAudioDevices();
+            // ★ MTA 백그라운드에서 디바이스 열거
+            _audioDevices = await System.Threading.Tasks.Task.Run(() => GstPlayer.GetAudioDevices());
 
             int monitorCount = DisplayHelper.GetMonitorCount();
             var buttons = new[] { btnM1Play, btnM2Play, btnM3Play, btnM4Play };
@@ -71,7 +72,7 @@ namespace GStreamerDotNetTest
             Textbox_numofstreamer.Text = defaultStreamCount.ToString();
             UpdateStreamTabs(defaultStreamCount);
             // =================================================================
-            startServer();
+            startServer(true);
         }
 
         // ★ 추가된 부분: 기본 설정으로 4개 스트림 구성을 생성하는 함수
@@ -83,7 +84,7 @@ namespace GStreamerDotNetTest
             for (int i = 0; i < count; i++)
             {
                 // 모니터 개수보다 스트림이 많으면 모니터 인덱스를 순환시킵니다.
-                int monitorIndex = 0;// (monitorCount > 0) ? (i % monitorCount) : 0;
+                int monitorIndex = (monitorCount > 0) ? (i % monitorCount) : 0;
 
                 int width, height;
                 // 모니터 크기를 가져오지 못하면 기본 1920x1080으로 설정합니다.
@@ -118,14 +119,15 @@ namespace GStreamerDotNetTest
             }
             return list.ToArray();
         }
-        private void startServer()
+        private void startServer(bool isFirst)
         {
             string serverIp = (Textbox_serverIP.Text ?? "").Trim();
 
             // =================================================================
             // ★ 수정된 부분 2: UI 설정 대신 기본 설정 값 사용
             // =================================================================
-            _configs = CreateDefaultStreamConfigs(4);
+            if (isFirst) _configs = CreateDefaultStreamConfigs(4);
+            
             // =================================================================
 
             if (_player != null)
@@ -133,7 +135,7 @@ namespace GStreamerDotNetTest
         }
         private void btnPlay_Click(object sender, RoutedEventArgs e)
         {
-            startServer();
+            startServer(false);
         }
 
         // --- 이하 나머지 코드는 변경 없습니다. ---
