@@ -7,6 +7,10 @@
 #include <msclr/marshal_cppstd.h>
 #include <gst/gstdevicemonitor.h>
 #include <gst/gstdevice.h>
+#include <objbase.h>
+#include <mmdeviceapi.h>
+#include <Functiondiscoverykeys_devpkey.h>
+#include <Propidl.h>
 
 // 필요한 .NET 네임스페이스 추가
 using namespace System::Runtime::InteropServices; // GCHandle을 위해 추가
@@ -17,6 +21,7 @@ using namespace System::Collections::Generic;
 #pragma comment(lib, "gstvideo-1.0.lib")
 #pragma comment(lib, "gobject-2.0.lib")
 #pragma comment(lib, "glib-2.0.lib")
+#pragma comment(lib, "ole32.lib")
 
 namespace GStreamerWrapper {
 
@@ -53,21 +58,104 @@ namespace GStreamerWrapper {
     array<String^>^ GstPlayer::GetAudioDevices()
     {
         List<String^>^ devices = gcnew List<String^>();
+
+        bool shouldCoUninitialize = false;
+        HRESULT initHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (SUCCEEDED(initHr)) {
+            shouldCoUninitialize = true;
+        }
+        else if (initHr == RPC_E_CHANGED_MODE) {
+            initHr = S_OK;
+        }
+
+        if (SUCCEEDED(initHr)) {
+            IMMDeviceEnumerator* enumerator = nullptr;
+            HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
+            if (SUCCEEDED(hr) && enumerator != nullptr) {
+                IMMDeviceCollection* collection = nullptr;
+                hr = enumerator->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &collection);
+                if (SUCCEEDED(hr) && collection != nullptr) {
+                    UINT count = 0;
+                    if (SUCCEEDED(collection->GetCount(&count))) {
+                        for (UINT i = 0; i < count; ++i) {
+                            IMMDevice* device = nullptr;
+                            if (SUCCEEDED(collection->Item(i, &device)) && device != nullptr) {
+                                IPropertyStore* store = nullptr;
+                                if (SUCCEEDED(device->OpenPropertyStore(STGM_READ, &store)) && store != nullptr) {
+                                    PROPVARIANT friendlyName;
+                                    PropVariantInit(&friendlyName);
+                                    if (SUCCEEDED(store->GetValue(PKEY_Device_FriendlyName, &friendlyName))) {
+                                        if (friendlyName.vt == VT_LPWSTR && friendlyName.pwszVal != nullptr) {
+                                            devices->Add(gcnew String(friendlyName.pwszVal));
+                                        }
+                                    }
+                                    PropVariantClear(&friendlyName);
+                                    store->Release();
+                                }
+                                device->Release();
+                            }
+                        }
+                    }
+                }
+                if (collection) {
+                    collection->Release();
+                    collection = nullptr;
+                }
+                enumerator->Release();
+            }
+        }
+
+        if (shouldCoUninitialize) {
+            CoUninitialize();
+        }
+
+        if (devices->Count > 0) {
+            return devices->ToArray();
+        }
+
         GstDeviceMonitor* mon = gst_device_monitor_new();
+        if (!mon) {
+            return devices->ToArray();
+        }
+
         GstCaps* caps = gst_caps_new_empty_simple("audio/x-raw");
-        gst_device_monitor_add_filter(mon, "Audio/Source", caps);
+        if (!caps) {
+            g_warning("Failed to create GstCaps for audio device enumeration");
+            gst_object_unref(mon);
+            return devices->ToArray();
+        }
+
+        guint filterId = gst_device_monitor_add_filter(mon, "Audio/Source", caps);
         gst_caps_unref(caps);
-        gst_device_monitor_start(mon);
+        if (filterId == 0) {
+            g_warning("Failed to add filter to GstDeviceMonitor for audio devices");
+            gst_object_unref(mon);
+            return devices->ToArray();
+        }
+
+        if (!gst_device_monitor_start(mon)) {
+            g_warning("Failed to start GstDeviceMonitor for audio devices");
+            gst_object_unref(mon);
+            return devices->ToArray();
+        }
+
         GList* devs = gst_device_monitor_get_devices(mon);
         for (GList* l = devs; l; l = l->next) {
             GstDevice* d = GST_DEVICE(l->data);
             const gchar* name = gst_device_get_display_name(d);
-            if (name) devices->Add(gcnew String(name));
+            if (name) {
+                devices->Add(gcnew String(name));
+            }
             gst_object_unref(d);
         }
-        g_list_free(devs);
+
+        if (devs) {
+            g_list_free(devs);
+        }
+
         gst_device_monitor_stop(mon);
         gst_object_unref(mon);
+
         return devices->ToArray();
     }
 
