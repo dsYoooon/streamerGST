@@ -12,11 +12,6 @@
 #include <Functiondiscoverykeys_devpkey.h>
 #include <Propidl.h>
 
-// 필요한 .NET 네임스페이스 추가
-using namespace System::Runtime::InteropServices; // GCHandle을 위해 추가
-using namespace System::Diagnostics;             // Debug 클래스를 위해 추가
-using namespace System::Collections::Generic;
-
 #pragma comment(lib, "gstreamer-1.0.lib")
 #pragma comment(lib, "gstvideo-1.0.lib")
 #pragma comment(lib, "gobject-2.0.lib")
@@ -24,6 +19,12 @@ using namespace System::Collections::Generic;
 #pragma comment(lib, "ole32.lib")
 
 namespace GStreamerWrapper {
+
+    // 필요한 .NET 네임스페이스 추가
+    using namespace System;
+    using namespace System::Runtime::InteropServices; // GCHandle을 위해 추가
+    using namespace System::Diagnostics;             // Debug 클래스를 위해 추가
+    using namespace System::Collections::Generic;
 
     void GstPlayer::Initialize()
     {
