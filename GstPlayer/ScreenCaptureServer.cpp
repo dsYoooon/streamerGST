@@ -158,6 +158,20 @@ namespace GStreamerWrapper {
     }
 
 
+    static gboolean is_nvidia_system() {
+        static gsize init_once = 0;
+        static gboolean has_nv = FALSE;
+        if (g_once_init_enter(&init_once)) {
+            GstElementFactory* fac = gst_element_factory_find("nvh264enc");
+            has_nv = (fac != NULL);
+            if (fac) {
+                gst_object_unref(fac);
+            }
+            g_once_init_leave(&init_once, 1);
+        }
+        return has_nv;
+    }
+
     /* ---------- RTSP client callbacks (절대 g_object_unref 연결X) ---------- */
     static void client_closed_callback(GstRTSPClient* client, gpointer) {
         GstRTSPConnection* c = gst_rtsp_client_get_connection(client);
@@ -332,6 +346,20 @@ namespace GStreamerWrapper {
         return ok;
     }
 
+    static gboolean link_queue_to_encoder(GstElement* queue, GstElement* upload, GstElement* encoder) {
+        if (!queue || !encoder) return FALSE;
+        if (upload) {
+            if (!link_ok(queue, upload))
+                return FALSE;
+            if (!link_ok(upload, encoder)) {
+                gst_element_unlink(queue, upload);
+                return FALSE;
+            }
+            return TRUE;
+        }
+        return link_ok(queue, encoder);
+    }
+
     /* ---------- create pipeline ---------- */
     static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory, const GstRTSPUrl*) {
         MyMediaFactory* self = (MyMediaFactory*)factory;
@@ -358,6 +386,18 @@ namespace GStreamerWrapper {
 
         GstElement* vq1 = gst_element_factory_make("queue", "vqueue1");
 
+        const gboolean nv_system = self->enable_hw_accel && is_nvidia_system();
+        GstElement* vdupload = NULL;
+        if (nv_system) {
+            vdupload = gst_element_factory_make("d3d12upload", "vd3d12upload");
+            if (vdupload)
+                g_print("[video] NVIDIA 시스템 감지 → d3d12upload 삽입\n");
+            else
+                g_warning("NVIDIA 시스템 감지되었지만 d3d12upload 생성 실패, CPU 경로로 폴백합니다.");
+        }
+
+        const gboolean try_hw_zero_copy = self->enable_hw_accel && (!nv_system || vdupload != NULL);
+
         // 인코더: HW on → encodebin, HW off → x264enc
         GstElement* venc = self->enable_hw_accel ?
             gst_element_factory_make("encodebin", "vencbin") :
@@ -379,6 +419,9 @@ namespace GStreamerWrapper {
             gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
         else
             gst_bin_add_many(GST_BIN(bin), vsrc, /*vd3d X*/ /*tover X*/ vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
+
+        if (vdupload)
+            gst_bin_add(GST_BIN(bin), vdupload);
 
         // 캡처 기본 설정
         g_object_set(vsrc,
@@ -431,7 +474,9 @@ namespace GStreamerWrapper {
         const gboolean NO_PARSE_HW = FALSE;
 
         // HW 가속이면: encodebin + 제로카피 우선 시도
-        if (self->enable_hw_accel) {
+        gboolean attempted_zero_copy = FALSE;
+        if (try_hw_zero_copy) {
+            attempted_zero_copy = TRUE;
             std::ostringstream pcaps;
             pcaps << "video/x-h264,profile=" << (self->profile ? self->profile : "high");
             GstCaps* h264_caps = gst_caps_from_string(pcaps.str().c_str());
@@ -446,18 +491,19 @@ namespace GStreamerWrapper {
             g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
 
             // ★ 제로카피 경로: vd3d2 -> vq1 (D3D11 NV12) -> encodebin
-            if (gst_element_link_filtered(vd3d2, vq1, gst_caps_ref(gpu_nv12_caps)) &&
-                gst_element_link(vq1, venc)) {
+            if (link_ok(vd3d2, vq1, gst_caps_ref(gpu_nv12_caps)) &&
+                link_queue_to_encoder(vq1, vdupload, venc)) {
                 zero_copy_ok = TRUE;
-                g_print("[video] Zero-copy D3D11Memory→encodebin 활성화\n");
+                g_print("[video] Zero-copy D3D11Memory→%sencodebin 활성화\n",
+                    vdupload ? "d3d12upload→" : "");
             }
             else {
-                g_print("[video] Zero-copy 링크 실패 → CPU 폴백으로 전환\n");
+                gst_element_unlink(vd3d2, vq1);
             }
         }
 
         // CPU 폴백 경로 (HW off이거나 zero-copy 실패 시)
-        if (!self->enable_hw_accel || !zero_copy_ok) {
+        if (!try_hw_zero_copy || !zero_copy_ok) {
             // vd3d2 → vdown(D3D11 NV12) → vconv(CPU NV12) → vq1
             {
                 std::ostringstream gpu_css;
@@ -476,7 +522,7 @@ namespace GStreamerWrapper {
             }
 
             if (self->enable_hw_accel) {
-                if (!gst_element_link(vq1, venc)) { gst_object_unref(bin); return NULL; }
+                if (!link_queue_to_encoder(vq1, vdupload, venc)) { gst_object_unref(bin); return NULL; }
             }
             else {
                 // 소프트웨어 x264enc 세팅
@@ -489,8 +535,12 @@ namespace GStreamerWrapper {
                     "byte-stream", TRUE,
                     NULL);
                 set_str_or_enum_if(G_OBJECT(venc), "profile", self->profile ? self->profile : "high");
-                if (!gst_element_link(vq1, venc)) { gst_object_unref(bin); return NULL; }
+                if (!link_queue_to_encoder(vq1, NULL, venc)) { gst_object_unref(bin); return NULL; }
             }
+        }
+
+        if (attempted_zero_copy && !zero_copy_ok) {
+            g_print("[video] Zero-copy 링크 실패 → CPU 폴백으로 전환\n");
         }
 
         // 파서 경로 (기본)
