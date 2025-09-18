@@ -266,6 +266,24 @@ namespace GStreamerWrapper {
 
     G_DEFINE_TYPE(MyMediaFactory, my_media_factory, GST_TYPE_RTSP_MEDIA_FACTORY)
 
+    static void configure_nvh264enc(GstElement* enc, MyMediaFactory* mf, gint keyint) {
+        if (!enc || !mf) return;
+
+        const gchar* rc = mf->bitrate_control ? mf->bitrate_control : "CBR";
+        const gchar* rc_nick = (g_ascii_strcasecmp(rc, "VBR") == 0) ? "vbr" : "cbr";
+
+        set_int_if(enc, "bitrate", mf->v_bitrate_kbps * 1000);
+        set_int_if(enc, "key-int-max", keyint);
+        set_int_if(enc, "gop-size", keyint);
+        if (mf->profile && *mf->profile) {
+            set_str_or_enum_if(G_OBJECT(enc), "profile", mf->profile);
+        }
+        set_property_string_or_enum(G_OBJECT(enc), "preset", "llhq");
+        set_property_string_or_enum(G_OBJECT(enc), "rc-mode", rc_nick);
+        set_int_if(enc, "rc-lookahead", 0);
+        set_int_if(enc, "b-frames", 0);
+    }
+
         static void on_encodebin_element_added(GstElement* encodebin, GstElement* elem, gpointer user_data) {
         (void)encodebin;
         MyMediaFactory* mf = (MyMediaFactory*)user_data;
@@ -402,27 +420,29 @@ namespace GStreamerWrapper {
         GstElement* vq1 = gst_element_factory_make("queue", "vqueue1");
 
         const gboolean nv_system = self->enable_hw_accel && is_nvidia_system();
-        GstElement* vdupload = NULL;
-        GstElement* vd12convert = NULL;
+        const gboolean use_encodebin = self->enable_hw_accel && !nv_system;
+        GstElement* vupload = NULL;
         if (nv_system) {
-            vdupload = gst_element_factory_make("d3d12upload", "vd3d12upload");
-            if (vdupload) {
-                vd12convert = gst_element_factory_make("d3d12convert", "vd3d12convert");
-                if (vd12convert)
-                    g_print("[video] NVIDIA 시스템 감지 → d3d12upload→d3d12convert 경로 활성화\n");
-                else
-                    g_warning("NVIDIA 시스템 감지되었지만 d3d12convert 생성 실패, 기존 경로로 진행합니다.");
-            }
+            vupload = gst_element_factory_make("cudaupload", "vcudaupload");
+            if (vupload)
+                g_print("[video] NVIDIA 시스템 감지 → cudaupload 경로 활성화\n");
             else
-                g_warning("NVIDIA 시스템 감지되었지만 d3d12upload 생성 실패, CPU 경로로 폴백합니다.");
+                g_warning("NVIDIA 시스템 감지되었지만 cudaupload 생성 실패, CPU 경로로 폴백합니다.");
         }
 
-        const gboolean try_hw_zero_copy = self->enable_hw_accel && (!nv_system || vdupload != NULL);
+        const gboolean try_hw_zero_copy = self->enable_hw_accel && (use_encodebin || vupload != NULL);
 
-        // 인코더: HW on → encodebin, HW off → x264enc
-        GstElement* venc = self->enable_hw_accel ?
-            gst_element_factory_make("encodebin", "vencbin") :
-            gst_element_factory_make("x264enc", "venc");
+        // 인코더: HW on → encodebin/nvh264enc, HW off → x264enc
+        GstElement* venc = NULL;
+        if (self->enable_hw_accel) {
+            if (nv_system)
+                venc = gst_element_factory_make("nvh264enc", "venc");
+            else
+                venc = gst_element_factory_make("encodebin", "vencbin");
+        }
+        else {
+            venc = gst_element_factory_make("x264enc", "venc");
+        }
 
         GstElement* vparse = gst_element_factory_make("h264parse", "vparse");
         GstElement* vcf = gst_element_factory_make("capsfilter", "vpaycaps");
@@ -441,10 +461,8 @@ namespace GStreamerWrapper {
         else
             gst_bin_add_many(GST_BIN(bin), vsrc, /*vd3d X*/ /*tover X*/ vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
 
-        if (vdupload)
-            gst_bin_add(GST_BIN(bin), vdupload);
-        if (vd12convert)
-            gst_bin_add(GST_BIN(bin), vd12convert);
+        if (vupload)
+            gst_bin_add(GST_BIN(bin), vupload);
 
         // 캡처 기본 설정
         g_object_set(vsrc,
@@ -496,29 +514,38 @@ namespace GStreamerWrapper {
         // 안정성: HW 가속 시에도 파서 사용 (AU 정렬/헤더 보장)
         const gboolean NO_PARSE_HW = FALSE;
 
-        // HW 가속이면: encodebin + 제로카피 우선 시도
+        if (nv_system && self->enable_hw_accel) {
+            configure_nvh264enc(venc, self, keyint);
+        }
+
+        // HW 가속이면: encodebin/nvh264enc + 제로카피 우선 시도
         gboolean attempted_zero_copy = FALSE;
         if (try_hw_zero_copy) {
             attempted_zero_copy = TRUE;
-            std::ostringstream pcaps;
-            pcaps << "video/x-h264,profile=" << (self->profile ? self->profile : "high");
-            GstCaps* h264_caps = gst_caps_from_string(pcaps.str().c_str());
-            GstCaps* restr = gst_caps_copy(gpu_nv12_caps); // NV12 + D3D11Memory
-            GstEncodingProfile* vprof = (GstEncodingProfile*)
-                gst_encoding_video_profile_new(h264_caps, NULL, restr, 1);
-            g_object_set(venc, "profile", vprof, NULL);
-            gst_encoding_profile_unref(vprof);
-            gst_caps_unref(h264_caps);
+            if (use_encodebin) {
+                std::ostringstream pcaps;
+                pcaps << "video/x-h264,profile=" << (self->profile ? self->profile : "high");
+                GstCaps* h264_caps = gst_caps_from_string(pcaps.str().c_str());
+                GstCaps* restr = gst_caps_copy(gpu_nv12_caps); // NV12 + D3D11Memory
+                GstEncodingProfile* vprof = (GstEncodingProfile*)
+                    gst_encoding_video_profile_new(h264_caps, NULL, restr, 1);
+                g_object_set(venc, "profile", vprof, NULL);
+                gst_encoding_profile_unref(vprof);
+                gst_caps_unref(h264_caps);
 
-            // encodebin 내부로 선택된 실제 인코더 튜닝
-            g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
+                // encodebin 내부로 선택된 실제 인코더 튜닝
+                g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
+            }
 
-            // ★ 제로카피 경로: vd3d2 -> vq1 (D3D11 NV12) -> encodebin
+            // ★ 제로카피 경로: vd3d2 -> vq1 (D3D11 NV12) -> 업로드 → 인코더
             if (link_ok(vd3d2, vq1, gst_caps_ref(gpu_nv12_caps)) &&
-                link_queue_to_encoder(vq1, vdupload, vd12convert, venc)) {
+                link_queue_to_encoder(vq1, vupload, NULL, venc)) {
                 zero_copy_ok = TRUE;
-                g_print("[video] Zero-copy D3D11Memory→%sencodebin 활성화\n",
-                    vdupload ? (vd12convert ? "d3d12upload→d3d12convert→" : "d3d12upload→") : "");
+                if (nv_system)
+                    g_print("[video] Zero-copy D3D11Memory→%snvh264enc 활성화\n",
+                        vupload ? "cudaupload→" : "");
+                else
+                    g_print("[video] Zero-copy D3D11Memory→encodebin 활성화\n");
             }
             else {
                 gst_element_unlink(vd3d2, vq1);
@@ -545,7 +572,7 @@ namespace GStreamerWrapper {
             }
 
             if (self->enable_hw_accel) {
-                if (!link_queue_to_encoder(vq1, vdupload, vd12convert, venc)) { gst_object_unref(bin); return NULL; }
+                if (!link_queue_to_encoder(vq1, vupload, NULL, venc)) { gst_object_unref(bin); return NULL; }
             }
             else {
                 // 소프트웨어 x264enc 세팅
