@@ -4,10 +4,11 @@
 #include <gst/video/videooverlay.h>
 #include <vcclr.h>
 #include <Windows.h>
-using namespace System;
-using namespace System::Runtime::InteropServices; // for GCHandle
 
 namespace GStreamerWrapper {
+
+    using namespace System;
+    using namespace System::Runtime::InteropServices; // for GCHandle
 
     public value struct StreamConfig
     {
