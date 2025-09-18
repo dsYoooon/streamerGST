@@ -346,18 +346,33 @@ namespace GStreamerWrapper {
         return ok;
     }
 
-    static gboolean link_queue_to_encoder(GstElement* queue, GstElement* upload, GstElement* encoder) {
+    static gboolean link_queue_to_encoder(
+        GstElement* queue,
+        GstElement* upload,
+        GstElement* convert,
+        GstElement* encoder) {
         if (!queue || !encoder) return FALSE;
-        if (upload) {
-            if (!link_ok(queue, upload))
-                return FALSE;
-            if (!link_ok(upload, encoder)) {
-                gst_element_unlink(queue, upload);
+
+        GstElement* chain[3];
+        int chain_count = 0;
+        if (upload) chain[chain_count++] = upload;
+        if (convert) chain[chain_count++] = convert;
+        chain[chain_count++] = encoder;
+
+        GstElement* prev = queue;
+        for (int i = 0; i < chain_count; ++i) {
+            GstElement* next = chain[i];
+            if (!link_ok(prev, next)) {
+                for (int j = i - 1; j >= 0; --j) {
+                    GstElement* to_unlink = chain[j];
+                    GstElement* from = (j == 0) ? queue : chain[j - 1];
+                    gst_element_unlink(from, to_unlink);
+                }
                 return FALSE;
             }
-            return TRUE;
+            prev = next;
         }
-        return link_ok(queue, encoder);
+        return TRUE;
     }
 
     /* ---------- create pipeline ---------- */
@@ -388,10 +403,16 @@ namespace GStreamerWrapper {
 
         const gboolean nv_system = self->enable_hw_accel && is_nvidia_system();
         GstElement* vdupload = NULL;
+        GstElement* vd12convert = NULL;
         if (nv_system) {
             vdupload = gst_element_factory_make("d3d12upload", "vd3d12upload");
-            if (vdupload)
-                g_print("[video] NVIDIA 시스템 감지 → d3d12upload 삽입\n");
+            if (vdupload) {
+                vd12convert = gst_element_factory_make("d3d12convert", "vd3d12convert");
+                if (vd12convert)
+                    g_print("[video] NVIDIA 시스템 감지 → d3d12upload→d3d12convert 경로 활성화\n");
+                else
+                    g_warning("NVIDIA 시스템 감지되었지만 d3d12convert 생성 실패, 기존 경로로 진행합니다.");
+            }
             else
                 g_warning("NVIDIA 시스템 감지되었지만 d3d12upload 생성 실패, CPU 경로로 폴백합니다.");
         }
@@ -422,6 +443,8 @@ namespace GStreamerWrapper {
 
         if (vdupload)
             gst_bin_add(GST_BIN(bin), vdupload);
+        if (vd12convert)
+            gst_bin_add(GST_BIN(bin), vd12convert);
 
         // 캡처 기본 설정
         g_object_set(vsrc,
@@ -492,10 +515,10 @@ namespace GStreamerWrapper {
 
             // ★ 제로카피 경로: vd3d2 -> vq1 (D3D11 NV12) -> encodebin
             if (link_ok(vd3d2, vq1, gst_caps_ref(gpu_nv12_caps)) &&
-                link_queue_to_encoder(vq1, vdupload, venc)) {
+                link_queue_to_encoder(vq1, vdupload, vd12convert, venc)) {
                 zero_copy_ok = TRUE;
                 g_print("[video] Zero-copy D3D11Memory→%sencodebin 활성화\n",
-                    vdupload ? "d3d12upload→" : "");
+                    vdupload ? (vd12convert ? "d3d12upload→d3d12convert→" : "d3d12upload→") : "");
             }
             else {
                 gst_element_unlink(vd3d2, vq1);
@@ -522,7 +545,7 @@ namespace GStreamerWrapper {
             }
 
             if (self->enable_hw_accel) {
-                if (!link_queue_to_encoder(vq1, vdupload, venc)) { gst_object_unref(bin); return NULL; }
+                if (!link_queue_to_encoder(vq1, vdupload, vd12convert, venc)) { gst_object_unref(bin); return NULL; }
             }
             else {
                 // 소프트웨어 x264enc 세팅
@@ -535,7 +558,7 @@ namespace GStreamerWrapper {
                     "byte-stream", TRUE,
                     NULL);
                 set_str_or_enum_if(G_OBJECT(venc), "profile", self->profile ? self->profile : "high");
-                if (!link_queue_to_encoder(vq1, NULL, venc)) { gst_object_unref(bin); return NULL; }
+                if (!link_queue_to_encoder(vq1, NULL, NULL, venc)) { gst_object_unref(bin); return NULL; }
             }
         }
 
