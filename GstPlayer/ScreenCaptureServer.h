@@ -27,6 +27,7 @@ struct StreamConfigNative {
     std::string bitrate_control;
     std::string profile;
     std::string overlay_text;
+    std::string multicast_ip;
 };
 
 // Starts the RTSP screen capture server on a background thread hosting

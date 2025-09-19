@@ -112,7 +112,7 @@ namespace GStreamerDotNetTest
                         AudioDevice = (_audioDevices.Length > 0) ? _audioDevices[0] : null,
                         EnableHardwareAccel = true,
                         EnableOsd = true,
-                        
+                        EnableMultiCast = false,
                         BitrateControl = "CBR",
                         Profile = "high",
                         OsdText = $"Screen {i + 1}"
@@ -139,6 +139,7 @@ namespace GStreamerDotNetTest
                         EnableHardwareAccel = false,
                         EnableOsd = true,
                         BitrateControl = "CBR",
+                        EnableMultiCast = false,
                         Profile = "baseline",
                         OsdText = $"Screen {i + 1}"
                     };

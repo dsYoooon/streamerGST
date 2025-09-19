@@ -254,6 +254,7 @@ namespace GStreamerWrapper {
         gboolean enable_osd;
         gchar* bitrate_control;
         gchar* profile;
+        gchar* multicast_ip;
         gboolean enable_multicast;
         // overlay
         gchar* overlay_text;
@@ -730,12 +731,14 @@ namespace GStreamerWrapper {
         f->profile = g_strdup(cfg.profile.empty() ? "high" : cfg.profile.c_str());
 
         if (f->overlay_text) g_free(f->overlay_text);
+
         if (!cfg.overlay_text.empty())
             f->overlay_text = g_strdup(cfg.overlay_text.c_str());
         else {
             std::ostringstream def; def << "Screen " << stream_index_1based;
             f->overlay_text = g_strdup(def.str().c_str());
         }
+ 
 
         gst_rtsp_media_factory_set_shared(GST_RTSP_MEDIA_FACTORY(f), TRUE);
         gst_rtsp_media_factory_set_suspend_mode(GST_RTSP_MEDIA_FACTORY(f), GST_RTSP_SUSPEND_MODE_NONE);
@@ -754,7 +757,15 @@ namespace GStreamerWrapper {
             // 멀티캐스트 주소/포트 풀 (예시: 239.255.10.(11+N), base_port=15000+N*20)
         const int base_octet = 11 + stream_index_1based;
         const int base_port = 15000 + stream_index_1based * 20;
-        std::ostringstream ip; ip << "239.255.10." << base_octet;
+
+
+        if (!cfg.multicast_ip.empty())
+            f->multicast_ip = g_strdup(cfg.multicast_ip.c_str());
+        else {
+            std::ostringstream def; def<< "239.255.10." << base_octet;
+            f->multicast_ip = g_strdup(def.str().c_str());
+        }
+		std::istringstream ip(f->multicast_ip);
         GstRTSPAddressPool* pool = gst_rtsp_address_pool_new();
         gst_rtsp_address_pool_add_range(pool, ip.str().c_str(), ip.str().c_str(), base_port, base_port + 19, 16);
         gst_rtsp_media_factory_set_address_pool(GST_RTSP_MEDIA_FACTORY(f), pool);

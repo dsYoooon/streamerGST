@@ -30,6 +30,7 @@ namespace GStreamerWrapper {
     {
         gst_init(nullptr, nullptr);
         gst_debug_set_default_threshold(GST_LEVEL_INFO);
+        //gst_debug_set_default_threshold(GST_LEVEL_WARNING);
     }
     static GstBusSyncReply BusSyncHandler(GstBus* bus, GstMessage* msg, gpointer data)
     {
@@ -258,6 +259,8 @@ namespace GStreamerWrapper {
                 ncfg.bitrate_control = msclr::interop::marshal_as<std::string>(cfg.BitrateControl);
             if (cfg.OsdText != nullptr)
                  ncfg.overlay_text = msclr::interop::marshal_as<std::string>(cfg.OsdText);
+            if (cfg.MultiCastIP != nullptr)
+                ncfg.multicast_ip = msclr::interop::marshal_as<std::string>(cfg.MultiCastIP);
             nativeConfigs.push_back(ncfg);
         }
 

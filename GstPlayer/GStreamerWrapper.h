@@ -31,6 +31,7 @@ namespace GStreamerWrapper {
         String^ BitrateControl;
         String^ Profile;
         String^ OsdText;
+        String^ MultiCastIP;
     };
 
     public ref class GstPlayer
