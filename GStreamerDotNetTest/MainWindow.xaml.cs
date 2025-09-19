@@ -4,6 +4,7 @@ using System.Windows;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Windows.Controls;
+using System.Net.NetworkInformation;
 using GStreamerWrapper; // C++/CLI 래퍼 네임스페이스
 
 namespace GStreamerDotNetTest
@@ -14,8 +15,9 @@ namespace GStreamerDotNetTest
         private GstVideoHost _videoHost;
         private StreamConfig[] _configs = new StreamConfig[0];
         private string[] _audioDevices = new string[0];
+        private string[] _networkInterfaceNames = new string[0];
 
-        // --- StreamSetting 클래스는 변경 없음 ---
+        // --- StreamSetting 클래스는 UI 요소를 보관합니다. ---
         private class StreamSetting
         {
             public ComboBox Monitor;
@@ -31,7 +33,8 @@ namespace GStreamerDotNetTest
             public ComboBox OsdEnable;
             public ComboBox MultiCastEnable;
             public TextBox MultiCastIp;
-            public TextBox MultiCastInterface;
+            public TextBox MultiCastInterfaceSearch;
+            public ComboBox MultiCastInterface;
             public TabItem Tab;
         }
 
@@ -62,6 +65,7 @@ namespace GStreamerDotNetTest
             _player = new GstPlayer(_videoHost.Handle);
             // ★ MTA 백그라운드에서 디바이스 열거
             _audioDevices = await System.Threading.Tasks.Task.Run(() => GstPlayer.GetAudioDevices());
+            _networkInterfaceNames = await System.Threading.Tasks.Task.Run(GetNetworkInterfaceNames);
 
             int monitorCount = DisplayHelper.GetMonitorCount();
             var buttons = new[] { btnM1Play, btnM2Play, btnM3Play, btnM4Play };
@@ -120,7 +124,7 @@ namespace GStreamerDotNetTest
                         Profile = "high",
                         OsdText = $"Screen {i + 1}",
                         MultiCastIP = string.Empty,
-                        MultiCastInterface = string.Empty
+                        MultiCastInterface = (_networkInterfaceNames.Length > 0) ? _networkInterfaceNames[0] : string.Empty
                     };
                     list.Add(cfg);
                 }
@@ -148,7 +152,7 @@ namespace GStreamerDotNetTest
                         Profile = "baseline",
                         OsdText = $"Screen {i + 1}",
                         MultiCastIP = string.Empty,
-                        MultiCastInterface = string.Empty
+                        MultiCastInterface = (_networkInterfaceNames.Length > 0) ? _networkInterfaceNames[0] : string.Empty
                     };
                     list.Add(cfg);
                 }
@@ -257,8 +261,9 @@ namespace GStreamerDotNetTest
 
                 if (s.MultiCastInterface != null)
                 {
-                    cfg.MultiCastInterface = s.MultiCastInterface.Text.Trim();
-                    if (string.IsNullOrWhiteSpace(cfg.MultiCastInterface)) cfg.MultiCastInterface = null;
+                    var selectedInterface = s.MultiCastInterface.SelectedItem as string;
+                    if (string.IsNullOrWhiteSpace(selectedInterface)) selectedInterface = null;
+                    cfg.MultiCastInterface = selectedInterface;
                 }
 
                 list.Add(cfg);
@@ -451,8 +456,28 @@ namespace GStreamerDotNetTest
             setting.MultiCastIp = new TextBox { Width = 150 };
             root.Children.Add(LabeledControl("Multicast IP:", setting.MultiCastIp));
 
-            setting.MultiCastInterface = new TextBox { Width = 150 };
-            root.Children.Add(LabeledControl("Multicast Interface:", setting.MultiCastInterface));
+            setting.MultiCastInterfaceSearch = new TextBox
+            {
+                Width = 150,
+                Margin = new Thickness(0, 0, 0, 4),
+                ToolTip = "NIC 이름을 입력하여 검색"
+            };
+            setting.MultiCastInterface = new ComboBox
+            {
+                Width = 200,
+                IsTextSearchEnabled = true
+            };
+            setting.MultiCastInterface.IsEnabled = _networkInterfaceNames.Length > 0;
+            setting.MultiCastInterfaceSearch.TextChanged += (s, e) => ApplyNetworkInterfaceFilter(setting);
+            ApplyNetworkInterfaceFilter(setting);
+
+            var multicastPanel = new StackPanel { Orientation = Orientation.Vertical };
+            var searchRow = new StackPanel { Orientation = Orientation.Horizontal };
+            searchRow.Children.Add(new Label { Content = "Search:", Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center });
+            searchRow.Children.Add(setting.MultiCastInterfaceSearch);
+            multicastPanel.Children.Add(searchRow);
+            multicastPanel.Children.Add(setting.MultiCastInterface);
+            root.Children.Add(LabeledControl("Multicast Interface:", multicastPanel));
 
             tab.Content = root;
             setting.Tab = tab;
@@ -470,6 +495,72 @@ namespace GStreamerDotNetTest
         private void BtnSaveSetting_Click(object sender, RoutedEventArgs e)
         {
             _configs = CollectStreamConfigs();
+        }
+
+        private static string[] GetNetworkInterfaceNames()
+        {
+            try
+            {
+                var list = new List<string>();
+                foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (nic != null && !string.IsNullOrWhiteSpace(nic.Name))
+                        list.Add(nic.Name);
+                }
+                list.Sort(StringComparer.OrdinalIgnoreCase);
+                return list.ToArray();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Failed to enumerate network interfaces: " + ex);
+                return new string[0];
+            }
+        }
+
+        private void ApplyNetworkInterfaceFilter(StreamSetting setting)
+        {
+            if (setting == null || setting.MultiCastInterface == null)
+                return;
+
+            string filter = string.Empty;
+            if (setting.MultiCastInterfaceSearch != null)
+                filter = setting.MultiCastInterfaceSearch.Text.Trim();
+
+            var filtered = new List<string>();
+            foreach (var name in _networkInterfaceNames)
+            {
+                if (string.IsNullOrEmpty(filter) || name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
+                    filtered.Add(name);
+            }
+
+            string previousSelection = setting.MultiCastInterface.SelectedItem as string;
+
+            setting.MultiCastInterface.Items.Clear();
+            foreach (var name in filtered)
+                setting.MultiCastInterface.Items.Add(name);
+
+            setting.MultiCastInterface.IsEnabled = filtered.Count > 0;
+
+            if (filtered.Count == 0)
+            {
+                setting.MultiCastInterface.SelectedIndex = -1;
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(previousSelection))
+            {
+                for (int i = 0; i < setting.MultiCastInterface.Items.Count; i++)
+                {
+                    var item = setting.MultiCastInterface.Items[i] as string;
+                    if (string.Equals(item, previousSelection, StringComparison.OrdinalIgnoreCase))
+                    {
+                        setting.MultiCastInterface.SelectedIndex = i;
+                        return;
+                    }
+                }
+            }
+
+            setting.MultiCastInterface.SelectedIndex = 0;
         }
     }
 }
