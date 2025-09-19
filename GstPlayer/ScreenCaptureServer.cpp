@@ -420,9 +420,24 @@ namespace GStreamerWrapper {
         const gboolean try_hw_zero_copy = self->enable_hw_accel && (!nv_system || vdupload != NULL);
 
         // 인코더: HW on → encodebin, HW off → x264enc
-        GstElement* venc = self->enable_hw_accel ?
-            gst_element_factory_make("encodebin", "vencbin") :
-            gst_element_factory_make("x264enc", "venc");
+        
+        GstElement* venc;
+        if (self->enable_hw_accel) {
+            if (nv_system) {
+
+                // NVIDIA: encodebin 대신 nvh264enc 직접 사용 (encodebin이 nvh264enc를 잘 선택하지 못함)
+                venc = gst_element_factory_make("nvh264enc", "venc");
+                g_print("[video] NVIDIA 시스템 + HW 가속 옵션 → nvh264enc 직접 사용\n");
+            }
+            else
+            {
+                venc = gst_element_factory_make("encodebin", "vencbin");
+            }
+		}
+        else {
+            venc = gst_element_factory_make("x264enc", "venc");
+        }
+        
 
         GstElement* vparse = gst_element_factory_make("h264parse", "vparse");
         GstElement* vcf = gst_element_factory_make("capsfilter", "vpaycaps");
