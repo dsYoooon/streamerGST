@@ -261,6 +261,8 @@ namespace GStreamerWrapper {
                  ncfg.overlay_text = msclr::interop::marshal_as<std::string>(cfg.OsdText);
             if (cfg.MultiCastIP != nullptr)
                 ncfg.multicast_ip = msclr::interop::marshal_as<std::string>(cfg.MultiCastIP);
+            if (cfg.MultiCastInterface != nullptr)
+                ncfg.multicast_iface = msclr::interop::marshal_as<std::string>(cfg.MultiCastInterface);
             nativeConfigs.push_back(ncfg);
         }
 

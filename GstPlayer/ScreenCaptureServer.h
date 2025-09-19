@@ -28,6 +28,7 @@ struct StreamConfigNative {
     std::string profile;
     std::string overlay_text;
     std::string multicast_ip;
+    std::string multicast_iface;
 };
 
 // Starts the RTSP screen capture server on a background thread hosting

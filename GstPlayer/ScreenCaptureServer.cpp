@@ -686,6 +686,7 @@ namespace GStreamerWrapper {
         if (self->audio_device) { g_free(self->audio_device);    self->audio_device = NULL; }
         if (self->bitrate_control) { g_free(self->bitrate_control); self->bitrate_control = NULL; }
         if (self->profile) { g_free(self->profile);         self->profile = NULL; }
+        if (self->multicast_ip) { g_free(self->multicast_ip);   self->multicast_ip = NULL; }
         G_OBJECT_CLASS(my_media_factory_parent_class)->finalize(object);
     }
     static void my_media_factory_class_init(MyMediaFactoryClass* klass) {
@@ -705,6 +706,7 @@ namespace GStreamerWrapper {
         self->keyint = 0;
         self->bitrate_control = g_strdup("CBR");
         self->profile = g_strdup("high");
+        self->multicast_ip = NULL;
     }
 
     /* ---------- factory build / per-stream server ---------- */
@@ -749,32 +751,36 @@ namespace GStreamerWrapper {
 
         // 프로토콜/멀티캐스트 (운영 정책에 따라 조정)
         if (f->enable_multicast) {
-            gst_rtsp_media_factory_set_protocols(GST_RTSP_MEDIA_FACTORY(f),
-                (GST_RTSP_LOWER_TRANS_UDP_MCAST));
-              gst_rtsp_media_factory_set_multicast_iface(GST_RTSP_MEDIA_FACTORY(f), g_server_ip.c_str());
-        
+            gst_rtsp_media_factory_set_protocols(
+                GST_RTSP_MEDIA_FACTORY(f), GST_RTSP_LOWER_TRANS_UDP_MCAST);
+
+            if (!cfg.multicast_iface.empty()) {
+                gst_rtsp_media_factory_set_multicast_iface(
+                    GST_RTSP_MEDIA_FACTORY(f), cfg.multicast_iface.c_str());
+            }
 
             // 멀티캐스트 주소/포트 풀 (예시: 239.255.10.(11+N), base_port=15000+N*20)
-        const int base_octet = 11 + stream_index_1based;
-        const int base_port = 15000 + stream_index_1based * 20;
+            const int base_octet = 11 + stream_index_1based;
+            const int base_port = 15000 + stream_index_1based * 20;
 
-
-        if (!cfg.multicast_ip.empty())
-            f->multicast_ip = g_strdup(cfg.multicast_ip.c_str());
-        else {
-            std::ostringstream def; def<< "239.255.10." << base_octet;
-            f->multicast_ip = g_strdup(def.str().c_str());
-        }
-		std::istringstream ip(f->multicast_ip);
-        GstRTSPAddressPool* pool = gst_rtsp_address_pool_new();
-        gst_rtsp_address_pool_add_range(pool, ip.str().c_str(), ip.str().c_str(), base_port, base_port + 19, 16);
-        gst_rtsp_media_factory_set_address_pool(GST_RTSP_MEDIA_FACTORY(f), pool);
-        g_object_unref(pool);
+            if (!cfg.multicast_ip.empty())
+                f->multicast_ip = g_strdup(cfg.multicast_ip.c_str());
+            else {
+                std::ostringstream def;
+                def << "239.255.10." << base_octet;
+                f->multicast_ip = g_strdup(def.str().c_str());
+            }
+            std::istringstream ip(f->multicast_ip);
+            GstRTSPAddressPool* pool = gst_rtsp_address_pool_new();
+            gst_rtsp_address_pool_add_range(pool, ip.str().c_str(), ip.str().c_str(),
+                                            base_port, base_port + 19, 16);
+            gst_rtsp_media_factory_set_address_pool(GST_RTSP_MEDIA_FACTORY(f), pool);
+            g_object_unref(pool);
         }
         else {
             gst_rtsp_media_factory_set_protocols(GST_RTSP_MEDIA_FACTORY(f),
                (GstRTSPLowerTrans) (GST_RTSP_LOWER_TRANS_UDP | GST_RTSP_LOWER_TRANS_TCP));
-  
+
         }
       
 

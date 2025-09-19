@@ -32,6 +32,7 @@ namespace GStreamerWrapper {
         String^ Profile;
         String^ OsdText;
         String^ MultiCastIP;
+        String^ MultiCastInterface;
     };
 
     public ref class GstPlayer
