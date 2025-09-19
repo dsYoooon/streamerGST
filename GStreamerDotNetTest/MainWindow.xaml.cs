@@ -29,6 +29,9 @@ namespace GStreamerDotNetTest
             public ComboBox AudioDevice;
             public ComboBox HwAccel;
             public ComboBox OsdEnable;
+            public ComboBox MultiCastEnable;
+            public TextBox MultiCastIp;
+            public TextBox MultiCastInterface;
             public TabItem Tab;
         }
 
@@ -115,7 +118,9 @@ namespace GStreamerDotNetTest
                         EnableMultiCast = false,
                         BitrateControl = "CBR",
                         Profile = "high",
-                        OsdText = $"Screen {i + 1}"
+                        OsdText = $"Screen {i + 1}",
+                        MultiCastIP = string.Empty,
+                        MultiCastInterface = string.Empty
                     };
                     list.Add(cfg);
                 }
@@ -141,7 +146,9 @@ namespace GStreamerDotNetTest
                         BitrateControl = "CBR",
                         EnableMultiCast = false,
                         Profile = "baseline",
-                        OsdText = $"Screen {i + 1}"
+                        OsdText = $"Screen {i + 1}",
+                        MultiCastIP = string.Empty,
+                        MultiCastInterface = string.Empty
                     };
                     list.Add(cfg);
                 }
@@ -240,6 +247,19 @@ namespace GStreamerDotNetTest
 
                 cfg.EnableHardwareAccel = s.HwAccel.SelectedIndex == 0;
                 cfg.EnableOsd = s.OsdEnable.SelectedIndex == 0;
+                cfg.EnableMultiCast = (s.MultiCastEnable != null && s.MultiCastEnable.SelectedIndex == 1);
+
+                if (s.MultiCastIp != null)
+                {
+                    cfg.MultiCastIP = s.MultiCastIp.Text.Trim();
+                    if (string.IsNullOrWhiteSpace(cfg.MultiCastIP)) cfg.MultiCastIP = null;
+                }
+
+                if (s.MultiCastInterface != null)
+                {
+                    cfg.MultiCastInterface = s.MultiCastInterface.Text.Trim();
+                    if (string.IsNullOrWhiteSpace(cfg.MultiCastInterface)) cfg.MultiCastInterface = null;
+                }
 
                 list.Add(cfg);
             }
@@ -421,6 +441,18 @@ namespace GStreamerDotNetTest
             setting.OsdEnable.Items.Add("Don't use");
             setting.OsdEnable.SelectedIndex = 0;
             root.Children.Add(LabeledControl("OSD:", setting.OsdEnable));
+
+            setting.MultiCastEnable = new ComboBox();
+            setting.MultiCastEnable.Items.Add("Disable");
+            setting.MultiCastEnable.Items.Add("Enable");
+            setting.MultiCastEnable.SelectedIndex = 0;
+            root.Children.Add(LabeledControl("Multicast:", setting.MultiCastEnable));
+
+            setting.MultiCastIp = new TextBox { Width = 150 };
+            root.Children.Add(LabeledControl("Multicast IP:", setting.MultiCastIp));
+
+            setting.MultiCastInterface = new TextBox { Width = 150 };
+            root.Children.Add(LabeledControl("Multicast Interface:", setting.MultiCastInterface));
 
             tab.Content = root;
             setting.Tab = tab;
