@@ -689,6 +689,348 @@ namespace GStreamerWrapper {
         return bin;
     }
 
+    static GstPad* request_mux_pad(GstElement* mux, const char* template_name) {
+        if (!mux || !template_name) return NULL;
+        GstPadTemplate* templ = gst_element_class_get_pad_template(
+            GST_ELEMENT_GET_CLASS(mux), template_name);
+        if (!templ) return NULL;
+        return gst_element_request_pad(mux, templ, NULL, NULL);
+    }
+
+    static gboolean link_queue_to_mux(GstElement* queue, GstElement* mux, const char* template_name) {
+        if (!queue || !mux || !template_name) return FALSE;
+
+        GstPad* srcpad = gst_element_get_static_pad(queue, "src");
+        if (!srcpad) return FALSE;
+
+        GstPad* sinkpad = request_mux_pad(mux, template_name);
+        if (!sinkpad) {
+            gst_object_unref(srcpad);
+            return FALSE;
+        }
+
+        GstPadLinkReturn ret = gst_pad_link(srcpad, sinkpad);
+        gst_object_unref(srcpad);
+        gst_object_unref(sinkpad);
+        return ret == GST_PAD_LINK_OK;
+    }
+
+    static GstElement* build_multicast_ts_pipeline(MyMediaFactory* self) {
+        if (!self) return NULL;
+
+        const gint monitor_index = self->monitor_index;
+        const gint crop_x = self->crop_x, crop_y = self->crop_y, crop_w = self->crop_w, crop_h = self->crop_h;
+        const gint out_w = (self->out_w & ~1), out_h = (self->out_h & ~1), fps = self->fps;
+        const gint a_bps = self->a_bitrate_bps;
+        const gint keyint = self->keyint > 0 ? self->keyint : fps;
+        g_print("moniidx: %d %d, fps: %d, a_bps: %d, keyint: %d", self->monitor_index, monitor_index,  self->fps, self->a_bitrate_bps, self->keyint);
+        g_print("[video] HW accel option: %s\n", self->enable_hw_accel ? "ON" : "OFF");
+
+        GstElement* bin = gst_bin_new(NULL);
+
+        GstElement* vsrc = gst_element_factory_make("d3d11screencapturesrc", NULL);
+        GstElement* vd3d = self->enable_osd ? gst_element_factory_make("d3d11convert", "vd3d11conv") : NULL;
+        GstElement* tover = self->enable_osd ? gst_element_factory_make("dwritetextoverlay", "overlay") : NULL;
+        GstElement* vd3d2 = gst_element_factory_make("d3d11convert", "vd3d11conv2");
+
+        GstElement* vdown = gst_element_factory_make("d3d11download", "vdown");
+        GstElement* vconv = gst_element_factory_make("videoconvert", "vconv");
+
+        GstElement* vq1 = gst_element_factory_make("queue", "vqueue1");
+
+        const gboolean nv_system = self->enable_hw_accel && is_nvidia_system();
+        GstElement* vdupload = NULL;
+        GstElement* vd12convert = NULL;
+        if (nv_system) {
+            vdupload = gst_element_factory_make("d3d12upload", "vd3d12upload");
+            if (vdupload) {
+                vd12convert = gst_element_factory_make("d3d12convert", "vd3d12convert");
+                if (vd12convert)
+                    g_print("[video] NVIDIA 시스템 감지 → d3d12upload→d3d12convert 경로 활성화\n");
+                else
+                    g_warning("NVIDIA 시스템 감지되었지만 d3d12convert 생성 실패, 기존 경로로 진행합니다.");
+            }
+            else
+                g_warning("NVIDIA 시스템 감지되었지만 d3d12upload 생성 실패, CPU 경로로 폴백합니다.");
+        }
+
+        const gboolean try_hw_zero_copy = self->enable_hw_accel && (!nv_system || vdupload != NULL);
+
+        GstElement* venc;
+        if (self->enable_hw_accel) {
+            if (nv_system) {
+                venc = gst_element_factory_make("nvh264enc", "venc");
+                g_print("[video] NVIDIA 시스템 + HW 가속 옵션 → nvh264enc 직접 사용\n");
+            }
+            else {
+                venc = gst_element_factory_make("encodebin", "vencbin");
+            }
+        }
+        else {
+            venc = gst_element_factory_make("x264enc", "venc");
+        }
+
+        GstElement* vparse = gst_element_factory_make("h264parse", "vparse");
+        GstElement* vcf = gst_element_factory_make("capsfilter", "vpaycaps");
+        GstElement* vq2 = gst_element_factory_make("queue", "vqueue2");
+
+        GstElement* tsmux = gst_element_factory_make("mpegtsmux", "tsmux");
+        GstElement* tsout = gst_element_factory_make("queue", "tsqueue");
+
+        if (!vsrc || !vd3d2 || !vdown || !vconv || !vq1 || !venc || !vparse || !vcf || !vq2 || !tsmux || !tsout ||
+            (self->enable_osd && (!vd3d || !tover))) {
+            g_printerr("비디오 요소 생성 실패\n");
+            if (bin) gst_object_unref(bin);
+            return NULL;
+        }
+
+        if (self->enable_osd)
+            gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, tsmux, tsout, NULL);
+        else
+            gst_bin_add_many(GST_BIN(bin), vsrc, /*vd3d X*/ /*tover X*/ vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, tsmux, tsout, NULL);
+
+        if (vdupload)
+            gst_bin_add(GST_BIN(bin), vdupload);
+        if (vd12convert)
+            gst_bin_add(GST_BIN(bin), vd12convert);
+
+        g_object_set(vsrc,
+            "monitor-index", monitor_index, "show-cursor", TRUE,
+            "crop-x", crop_x, "crop-y", crop_y, "crop-width", crop_w, "crop-height", crop_h,
+            NULL);
+
+        GstElement* prev = vsrc;
+        if (self->enable_osd) {
+            std::ostringstream css;
+            css << "video/x-raw(memory:D3D11Memory),format=BGRA,"
+                << "width=" << out_w << ",height=" << out_h
+                << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
+            if (!link_ok(vsrc, vd3d, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
+
+            const gchar* txt = (self->overlay_text && *self->overlay_text) ? self->overlay_text : "";
+            g_object_set(tover,
+                "text", txt,
+                "font-family", "Segoe UI",
+                "font-size", 20.0,
+                "layout-x", 0.03, "layout-y", 0.03, "layout-width", 0.94, "layout-height", 0.94,
+                "text-alignment", 0, "paragraph-alignment", 0,
+                "foreground-color", 0xFFFFFFFFu, "background-color", 0x00000000u,
+                "outline-color", 0x80000000u, "shadow-color", 0x80000000u,
+                NULL);
+
+            self->overlay_elem = tover;
+            g_object_add_weak_pointer(G_OBJECT(tover), (gpointer*)&self->overlay_elem);
+            if (!link_ok(vd3d, tover)) { gst_object_unref(bin); return NULL; }
+            prev = tover;
+        }
+
+        if (!link_ok(prev, vd3d2)) { gst_object_unref(bin); return NULL; }
+
+        GstCaps* gpu_nv12_caps = gst_caps_new_simple("video/x-raw",
+            "format", G_TYPE_STRING, "NV12",
+            "width", G_TYPE_INT, out_w,
+            "height", G_TYPE_INT, out_h,
+            "framerate", GST_TYPE_FRACTION, fps, 1,
+            "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, NULL);
+        gst_caps_set_features(gpu_nv12_caps, 0, gst_caps_features_new("memory:D3D11Memory", NULL));
+
+        gboolean zero_copy_ok = FALSE;
+        const gboolean NO_PARSE_HW = FALSE;
+        gboolean attempted_zero_copy = FALSE;
+        if (try_hw_zero_copy) {
+            attempted_zero_copy = TRUE;
+            std::ostringstream pcaps;
+            pcaps << "video/x-h264,profile=" << (self->profile ? self->profile : "high");
+            GstCaps* h264_caps = gst_caps_from_string(pcaps.str().c_str());
+            GstCaps* restr = gst_caps_copy(gpu_nv12_caps);
+            GstEncodingProfile* vprof = (GstEncodingProfile*)
+                gst_encoding_video_profile_new(h264_caps, NULL, restr, 1);
+            g_object_set(venc, "profile", vprof, NULL);
+            gst_encoding_profile_unref(vprof);
+            gst_caps_unref(h264_caps);
+
+            g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
+
+            if (link_ok(vd3d2, vq1, gst_caps_ref(gpu_nv12_caps)) &&
+                link_queue_to_encoder(vq1, vdupload, vd12convert, venc)) {
+                zero_copy_ok = TRUE;
+                g_print("[video] Zero-copy D3D11Memory→%sencodebin 활성화\n",
+                    vdupload ? (vd12convert ? "d3d12upload→d3d12convert→" : "d3d12upload→") : "");
+            }
+            else {
+                gst_element_unlink(vd3d2, vq1);
+            }
+        }
+
+        if (!try_hw_zero_copy || !zero_copy_ok) {
+            {
+                std::ostringstream gpu_css;
+                gpu_css << "video/x-raw(memory:D3D11Memory),format=NV12,"
+                    << "width=" << out_w << ",height=" << out_h
+                    << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
+                if (!link_ok(vd3d2, vdown, gst_caps_from_string(gpu_css.str().c_str()))) { gst_object_unref(bin); return NULL; }
+            }
+            {
+                std::ostringstream cpu_css;
+                cpu_css << "video/x-raw,format=NV12,"
+                    << "width=" << out_w << ",height=" << out_h
+                    << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
+                if (!link_ok(vdown, vconv)) { gst_object_unref(bin); return NULL; }
+                if (!link_ok(vconv, vq1, gst_caps_from_string(cpu_css.str().c_str()))) { gst_object_unref(bin); return NULL; }
+            }
+
+            if (self->enable_hw_accel) {
+                if (!link_queue_to_encoder(vq1, vdupload, vd12convert, venc)) { gst_object_unref(bin); return NULL; }
+            }
+            else {
+                g_object_set(venc,
+                    "bitrate", self->v_bitrate_kbps,
+                    "key-int-max", keyint,
+                    "gop-size", keyint,
+                    "speed-preset", 1,
+                    "tune", 0x00000004,
+                    "byte-stream", TRUE,
+                    NULL);
+                set_str_or_enum_if(G_OBJECT(venc), "profile", self->profile ? self->profile : "high");
+                if (!link_queue_to_encoder(vq1, NULL, NULL, venc)) { gst_object_unref(bin); return NULL; }
+            }
+        }
+
+        if (attempted_zero_copy && !zero_copy_ok) {
+            g_print("[video] Zero-copy 링크 실패 → CPU 폴백으로 전환\n");
+        }
+
+        gboolean linked_after_enc = FALSE;
+        g_object_set(vparse, "config-interval", 1, NULL);
+        if (self->enable_hw_accel && NO_PARSE_HW) {
+            if (link_ok(venc, vcf)) {
+                linked_after_enc = TRUE;
+                g_print("[video] h264parse 생략 경로 사용\n");
+            }
+        }
+        if (!linked_after_enc) {
+            if (!link_ok(venc, vparse)) { gst_object_unref(bin); return NULL; }
+            if (!link_ok(vparse, vcf)) { gst_object_unref(bin); return NULL; }
+        }
+
+        {
+            std::ostringstream paystr;
+            paystr << "video/x-h264,stream-format=byte-stream,alignment=au,profile=(string)"
+                << (self->profile ? self->profile : "high");
+            GstCaps* paycaps = gst_caps_from_string(paystr.str().c_str());
+            g_object_set(vcf, "caps", paycaps, NULL);
+            gst_caps_unref(paycaps);
+        }
+        g_object_set(vq1, "leaky", 2, "max-size-buffers", 15, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
+        g_object_set(vq2, "leaky", 2, "max-size-buffers", 8, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
+        g_object_set(tsout, "leaky", 2, "max-size-buffers", 20, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
+
+        if (!link_ok(vcf, vq2)) { gst_object_unref(bin); return NULL; }
+
+        /* --- 오디오 (선택) --- */
+        GstElement* aq2_mux = NULL;
+        if (self->enable_audio) {
+            GstElement* asrc = gst_element_factory_make("wasapi2src", "asrc");
+            if (!asrc) asrc = gst_element_factory_make("wasapisrc", "asrc");
+            GstElement* aq1 = gst_element_factory_make("queue", "aqueue1");
+            GstElement* aconv = gst_element_factory_make("audioconvert", NULL);
+            GstElement* ares = gst_element_factory_make("audioresample", NULL);
+            GstElement* acaps = gst_element_factory_make("capsfilter", "acaps");
+            GstElement* aq2 = gst_element_factory_make("queue", "aqueue2");
+            GstElement* aenc = gst_element_factory_make("avenc_aac", "aenc");
+            GstElement* aparse = gst_element_factory_make("aacparse", "aparser");
+            aq2_mux = gst_element_factory_make("queue", "aqueue_ts");
+
+            if (!asrc || !aq1 || !aconv || !ares || !acaps || !aq2 || !aenc || !aparse || !aq2_mux) {
+                g_warning("오디오 요소 생성 실패, 비디오만 스트리밍합니다.");
+                if (asrc) gst_object_unref(asrc);
+                if (aq1) gst_object_unref(aq1);
+                if (aconv) gst_object_unref(aconv);
+                if (ares) gst_object_unref(ares);
+                if (acaps) gst_object_unref(acaps);
+                if (aq2) gst_object_unref(aq2);
+                if (aenc) gst_object_unref(aenc);
+                if (aparse) gst_object_unref(aparse);
+                if (aq2_mux) gst_object_unref(aq2_mux);
+                aq2_mux = NULL;
+            }
+            else {
+                gst_bin_add_many(GST_BIN(bin), asrc, aq1, aconv, ares, acaps, aq2, aenc, aparse, aq2_mux, NULL);
+
+                g_object_set(asrc,
+                    "loopback", TRUE,
+                    "do-timestamp", TRUE,
+                    "loopback-silence-on-device-mute", TRUE,
+                    NULL);
+
+                g_object_set(aq1, "leaky", 2, "max-size-buffers", 20, "max-size-bytes", 0,
+                    "max-size-time", (gint64)0, NULL);
+                g_object_set(aq2, "leaky", 2, "max-size-buffers", 12, "max-size-bytes", 0,
+                    "max-size-time", (gint64)0, NULL);
+                g_object_set(aq2_mux, "leaky", 2, "max-size-buffers", 12, "max-size-bytes", 0,
+                    "max-size-time", (gint64)0, NULL);
+
+                GstCaps* a_caps = gst_caps_new_simple("audio/x-raw",
+                    "format", G_TYPE_STRING, "S16LE",
+                    "rate", G_TYPE_INT, 48000,
+                    "channels", G_TYPE_INT, 2, NULL);
+                g_object_set(acaps, "caps", a_caps, NULL);
+                gst_caps_unref(a_caps);
+
+                g_object_set(aenc,
+                    "bitrate", a_bps,
+                    NULL);
+
+                if (!gst_element_link_many(asrc, aq1, aconv, ares, acaps, aq2, aenc, aparse, aq2_mux, NULL)) {
+                    g_warning("오디오 파이프라인 연결 실패, 비디오만 스트리밍합니다.");
+                    gst_bin_remove_many(GST_BIN(bin), asrc, aq1, aconv, ares, acaps, aq2, aenc, aparse, aq2_mux, NULL);
+                    aq2_mux = NULL;
+                }
+            }
+        }
+
+        if (gpu_nv12_caps) gst_caps_unref(gpu_nv12_caps);
+
+        if (!link_queue_to_mux(vq2, tsmux, "video_%u")) {
+            g_printerr("비디오 → MPEG-TS 링크 실패\n");
+            gst_object_unref(bin);
+            return NULL;
+        }
+
+        if (self->enable_audio && !aq2_mux) {
+            self->enable_audio = FALSE;
+        }
+
+        if (aq2_mux) {
+            if (!link_queue_to_mux(aq2_mux, tsmux, "audio_%u")) {
+                g_printerr("오디오 → MPEG-TS 링크 실패\n");
+                gst_object_unref(bin);
+                return NULL;
+            }
+        }
+
+        if (!gst_element_link(tsmux, tsout)) {
+            g_printerr("MPEG-TS 출력 링크 실패\n");
+            gst_object_unref(bin);
+            return NULL;
+        }
+
+        GstPad* srcpad = gst_element_get_static_pad(tsout, "src");
+        if (!srcpad) {
+            gst_object_unref(bin);
+            return NULL;
+        }
+        GstPad* ghost = gst_ghost_pad_new("src", srcpad);
+        gst_object_unref(srcpad);
+        if (!ghost) {
+            gst_object_unref(bin);
+            return NULL;
+        }
+        gst_element_add_pad(bin, ghost);
+
+        return bin;
+    }
+
     /* ---------- finalize ---------- */
     static void my_media_factory_constructed(GObject* object) {
         if (G_OBJECT_CLASS(my_media_factory_parent_class)->constructed) {
@@ -836,7 +1178,7 @@ namespace GStreamerWrapper {
             return entry;
         }
 
-        GstElement* bin = my_media_factory_create_element(GST_RTSP_MEDIA_FACTORY(f), NULL);
+        GstElement* bin = build_multicast_ts_pipeline(f);
         if (!bin) {
             g_printerr("멀티캐스트용 파이프라인 생성 실패 (stream=%d)\n", stream_index_1based);
             g_object_unref(f);
@@ -851,101 +1193,46 @@ namespace GStreamerWrapper {
             return entry;
         }
 
-        gst_bin_add(GST_BIN(pipeline), bin);
-
-        GstElement* vpay = gst_bin_get_by_name(GST_BIN(bin), "pay0");
-        GstElement* apay = gst_bin_get_by_name(GST_BIN(bin), "pay1");
-        GstElement* vqueue = NULL;
-        GstElement* vsink = NULL;
-        GstElement* aqueue = NULL;
-        GstElement* asink = NULL;
-
-        if (vpay) {
-            vqueue = gst_element_factory_make("queue", NULL);
-            vsink = gst_element_factory_make("udpsink", NULL);
+        GstElement* udpsink = gst_element_factory_make("udpsink", "ts_udpsink");
+        if (!udpsink) {
+            g_printerr("멀티캐스트용 UDP sink 생성 실패\n");
+            gst_object_unref(pipeline);
+            gst_object_unref(bin);
+            g_object_unref(f);
+            return entry;
         }
 
-        if (apay) {
-            aqueue = gst_element_factory_make("queue", NULL);
-            asink = gst_element_factory_make("udpsink", NULL);
+        gst_bin_add_many(GST_BIN(pipeline), bin, udpsink, NULL);
+
+        g_object_set(udpsink,
+            "host", f->multicast_ip,
+            "port", f->multicast_base_port,
+            "auto-multicast", TRUE,
+            "ttl-mc", 16,
+            "sync", FALSE,
+            "async", FALSE,
+            NULL);
+        if (f->multicast_iface && *f->multicast_iface) {
+            g_object_set(udpsink, "multicast-iface", f->multicast_iface, NULL);
         }
 
-        gboolean success = TRUE;
-
-        if (vpay && vqueue && vsink) {
-            gst_bin_add_many(GST_BIN(bin), vqueue, vsink, NULL);
-            g_object_set(vqueue, "leaky", 2, "max-size-buffers", 8, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
-            g_object_set(vsink,
-                "host", f->multicast_ip,
-                "port", f->multicast_base_port,
-                "auto-multicast", TRUE,
-                "ttl-mc", 16,
-                "sync", FALSE,
-                "async", FALSE,
-                NULL);
-            if (f->multicast_iface && *f->multicast_iface) {
-                g_object_set(vsink, "multicast-iface", f->multicast_iface, NULL);
-            }
-            if (!gst_element_link_many(vpay, vqueue, vsink, NULL)) {
-                g_printerr("비디오 멀티캐스트 링크 실패\n");
-                success = FALSE;
-            }
-            else {
-                entry.video_port = f->multicast_base_port;
-            }
-        }
-        else {
-            success = FALSE;
-            g_printerr("비디오 RTP 페이로드 요소를 찾을 수 없습니다 (stream=%d)\n", stream_index_1based);
-        }
-
-        if (success && apay) {
-            if (aqueue && asink) {
-                gst_bin_add_many(GST_BIN(bin), aqueue, asink, NULL);
-                g_object_set(aqueue, "leaky", 2, "max-size-buffers", 12, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
-                g_object_set(asink,
-                    "host", f->multicast_ip,
-                    "port", f->multicast_base_port + 2,
-                    "auto-multicast", TRUE,
-                    "ttl-mc", 16,
-                    "sync", FALSE,
-                    "async", FALSE,
-                    NULL);
-                if (f->multicast_iface && *f->multicast_iface) {
-                    g_object_set(asink, "multicast-iface", f->multicast_iface, NULL);
-                }
-                if (!gst_element_link_many(apay, aqueue, asink, NULL)) {
-                    g_printerr("오디오 멀티캐스트 링크 실패\n");
-                    success = FALSE;
-                }
-                else {
-                    entry.audio_port = f->multicast_base_port + 2;
-                }
-            }
-            else {
-                g_printerr("오디오 멀티캐스트 구성 요소 생성 실패\n");
-                success = FALSE;
-            }
-        }
-
-        if (!success) {
-            if (pipeline) {
-                gst_element_set_state(pipeline, GST_STATE_NULL);
-                gst_object_unref(pipeline);
-            }
-            if (vpay) gst_object_unref(vpay);
-            if (apay) gst_object_unref(apay);
-            if (f) g_object_unref(f);
-            entry.pipeline = NULL;
+        if (!gst_element_link(bin, udpsink)) {
+            g_printerr("MPEG-TS 멀티캐스트 링크 실패\n");
+            gst_element_set_state(pipeline, GST_STATE_NULL);
+            gst_object_unref(pipeline);
+            g_object_unref(f);
             return entry;
         }
 
         entry.pipeline = pipeline;
         entry.multicast_ip = f->multicast_ip ? f->multicast_ip : "";
+        entry.video_port = f->multicast_base_port;
+        entry.audio_port = f->enable_audio ? f->multicast_base_port : 0;
 
-        if (vpay) gst_object_unref(vpay);
-        if (apay) gst_object_unref(apay);
-        if (f) g_object_unref(f);
+        g_print("[multicast] MPEG-TS 스트림: %s:%d (stream=%d)\n",
+            entry.multicast_ip.c_str(), entry.video_port, stream_index_1based);
+
+        gst_object_unref(f);
 
         return entry;
     }
