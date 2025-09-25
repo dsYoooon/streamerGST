@@ -34,6 +34,13 @@ namespace GStreamerWrapper {
         int                  service_port = 0;  // listening port (cfg.port)
     };
 
+    struct MulticastEntry {
+        GstElement* pipeline = NULL;
+        std::string multicast_ip;
+        int video_port = 0;
+        int audio_port = 0;
+    };
+
     struct RtspServerContext {
         GMainLoop* loop = NULL;                 // single mainloop
         GMainContext* main_ctx = NULL;          // shared main context
@@ -41,6 +48,7 @@ namespace GStreamerWrapper {
         GstRTSPSessionPool* session_pool = NULL;// shared session pool
         std::vector<ServerEntry> servers;       // N servers
         std::vector<GstRTSPMediaFactory*> factories; // N factories (1:1)
+        std::vector<MulticastEntry> multicast_streams; // standalone UDP pipelines
     };
 
     static RtspServerContext g_ctx;
@@ -157,6 +165,16 @@ namespace GStreamerWrapper {
         }
     }
 
+    static void set_string_field(gchar** target, const std::string& value) {
+        if (*target) {
+            g_free(*target);
+            *target = NULL;
+        }
+        if (!value.empty()) {
+            *target = g_strdup(value.c_str());
+        }
+    }
+
 
     static gboolean is_nvidia_system() {
         static gsize init_once = 0;
@@ -255,7 +273,9 @@ namespace GStreamerWrapper {
         gchar* bitrate_control;
         gchar* profile;
         gchar* multicast_ip;
+        gchar* multicast_iface;
         gboolean enable_multicast;
+        gint multicast_base_port;
         // overlay
         gchar* overlay_text;
         GstElement* overlay_elem; // weak
@@ -687,6 +707,7 @@ namespace GStreamerWrapper {
         if (self->bitrate_control) { g_free(self->bitrate_control); self->bitrate_control = NULL; }
         if (self->profile) { g_free(self->profile);         self->profile = NULL; }
         if (self->multicast_ip) { g_free(self->multicast_ip);   self->multicast_ip = NULL; }
+        if (self->multicast_iface) { g_free(self->multicast_iface); self->multicast_iface = NULL; }
         G_OBJECT_CLASS(my_media_factory_parent_class)->finalize(object);
     }
     static void my_media_factory_class_init(MyMediaFactoryClass* klass) {
@@ -707,10 +728,11 @@ namespace GStreamerWrapper {
         self->bitrate_control = g_strdup("CBR");
         self->profile = g_strdup("high");
         self->multicast_ip = NULL;
+        self->multicast_iface = NULL;
+        self->multicast_base_port = 0;
     }
 
-    /* ---------- factory build / per-stream server ---------- */
-    static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative& cfg, int stream_index_1based) {
+    static MyMediaFactory* create_media_factory_base(const StreamConfigNative& cfg, int stream_index_1based) {
         MyMediaFactory* f = (MyMediaFactory*)g_object_new(my_media_factory_get_type(), NULL);
 
         f->monitor_index = cfg.monitor_index;
@@ -721,26 +743,46 @@ namespace GStreamerWrapper {
         f->v_bitrate_kbps = cfg.bitrate_kbps > 0 ? cfg.bitrate_kbps : 8000;
         f->a_bitrate_bps = 128000;
         f->enable_audio = cfg.enable_audio;
-        if (!cfg.audio_device.empty()) f->audio_device = g_strdup(cfg.audio_device.c_str());
+        set_string_field(&f->audio_device, cfg.audio_device);
         f->enable_hw_accel = cfg.enable_hw_accel;
         f->enable_osd = cfg.enable_osd;
         f->keyint = cfg.keyframe_interval > 0 ? cfg.keyframe_interval : f->fps;
         f->enable_multicast = cfg.enable_multicast;
-        if (f->bitrate_control) g_free(f->bitrate_control);
-        f->bitrate_control = g_strdup(cfg.bitrate_control.empty() ? "CBR" : cfg.bitrate_control.c_str());
 
-        if (f->profile) g_free(f->profile);
-        f->profile = g_strdup(cfg.profile.empty() ? "high" : cfg.profile.c_str());
+        set_string_field(&f->bitrate_control, cfg.bitrate_control.empty() ? std::string("CBR") : cfg.bitrate_control);
+        set_string_field(&f->profile, cfg.profile.empty() ? std::string("high") : cfg.profile);
 
-        if (f->overlay_text) g_free(f->overlay_text);
-
-        if (!cfg.overlay_text.empty())
-            f->overlay_text = g_strdup(cfg.overlay_text.c_str());
+        if (!cfg.overlay_text.empty()) {
+            set_string_field(&f->overlay_text, cfg.overlay_text);
+        }
         else {
             std::ostringstream def; def << "Screen " << stream_index_1based;
-            f->overlay_text = g_strdup(def.str().c_str());
+            set_string_field(&f->overlay_text, def.str());
         }
- 
+
+        set_string_field(&f->multicast_iface, cfg.multicast_iface);
+        set_string_field(&f->multicast_ip, cfg.multicast_ip);
+
+        if (f->enable_multicast) {
+            const int base_octet = 11 + stream_index_1based;
+            const int base_port = 15000 + stream_index_1based * 20;
+            f->multicast_base_port = base_port;
+            if (!f->multicast_ip) {
+                std::ostringstream def;
+                def << "239.255.10." << base_octet;
+                set_string_field(&f->multicast_ip, def.str());
+            }
+        }
+        else {
+            f->multicast_base_port = 0;
+        }
+
+        return f;
+    }
+
+    /* ---------- factory build / per-stream server ---------- */
+    static GstRTSPMediaFactory* create_factory_from_config(const StreamConfigNative& cfg, int stream_index_1based) {
+        MyMediaFactory* f = create_media_factory_base(cfg, stream_index_1based);
 
         gst_rtsp_media_factory_set_shared(GST_RTSP_MEDIA_FACTORY(f), TRUE);
         gst_rtsp_media_factory_set_suspend_mode(GST_RTSP_MEDIA_FACTORY(f), GST_RTSP_SUSPEND_MODE_NONE);
@@ -754,27 +796,18 @@ namespace GStreamerWrapper {
             gst_rtsp_media_factory_set_protocols(
                 GST_RTSP_MEDIA_FACTORY(f), GST_RTSP_LOWER_TRANS_UDP_MCAST);
 
-            if (!cfg.multicast_iface.empty()) {
+            if (f->multicast_iface) {
                 gst_rtsp_media_factory_set_multicast_iface(
-                    GST_RTSP_MEDIA_FACTORY(f), cfg.multicast_iface.c_str());
+                    GST_RTSP_MEDIA_FACTORY(f), f->multicast_iface);
             }
-            
-            // 멀티캐스트 주소/포트 풀 (예시: 239.255.10.(11+N), base_port=15000+N*20)
-            const int base_octet = 11 + stream_index_1based;
-            const int base_port = 15000 + stream_index_1based * 20;
 
-            if (!cfg.multicast_ip.empty())
-                f->multicast_ip = g_strdup(cfg.multicast_ip.c_str());
-            else {
-                std::ostringstream def;
-                def << "239.255.10." << base_octet;
-                f->multicast_ip = g_strdup(def.str().c_str());
-            }
-            g_print("multicast_iface : %s  , multicast_ip: %s", cfg.multicast_iface.c_str(), f->multicast_ip);
-            std::istringstream ip(f->multicast_ip);
+            // 멀티캐스트 주소/포트 풀 (예시: 239.255.10.(11+N), base_port=15000+N*20)
+            g_print("multicast_iface : %s  , multicast_ip: %s", f->multicast_iface ? f->multicast_iface : "",
+                f->multicast_ip ? f->multicast_ip : "");
+            const std::string ip_str = f->multicast_ip ? f->multicast_ip : "";
             GstRTSPAddressPool* pool = gst_rtsp_address_pool_new();
-            gst_rtsp_address_pool_add_range(pool, ip.str().c_str(), ip.str().c_str(),
-                                            base_port, base_port + 19, 16);
+            gst_rtsp_address_pool_add_range(pool, ip_str.c_str(), ip_str.c_str(),
+                f->multicast_base_port, f->multicast_base_port + 19, 16);
             gst_rtsp_media_factory_set_address_pool(GST_RTSP_MEDIA_FACTORY(f), pool);
             g_object_unref(pool);
         }
@@ -786,6 +819,135 @@ namespace GStreamerWrapper {
       
 
         return GST_RTSP_MEDIA_FACTORY(f);
+    }
+
+    static MulticastEntry create_multicast_pipeline(const StreamConfigNative& cfg, int stream_index_1based) {
+        MulticastEntry entry;
+        MyMediaFactory* f = create_media_factory_base(cfg, stream_index_1based);
+
+        if (!f->enable_multicast) {
+            g_object_unref(f);
+            return entry;
+        }
+
+        if (!f->multicast_ip || !*f->multicast_ip || f->multicast_base_port <= 0) {
+            g_printerr("멀티캐스트 설정이 올바르지 않습니다. IP 또는 포트가 비어 있습니다.\n");
+            g_object_unref(f);
+            return entry;
+        }
+
+        GstElement* bin = my_media_factory_create_element(GST_RTSP_MEDIA_FACTORY(f), NULL);
+        if (!bin) {
+            g_printerr("멀티캐스트용 파이프라인 생성 실패 (stream=%d)\n", stream_index_1based);
+            g_object_unref(f);
+            return entry;
+        }
+
+        GstElement* pipeline = gst_pipeline_new(NULL);
+        if (!pipeline) {
+            g_printerr("멀티캐스트용 파이프라인(pipeline) 생성 실패\n");
+            gst_object_unref(bin);
+            g_object_unref(f);
+            return entry;
+        }
+
+        gst_bin_add(GST_BIN(pipeline), bin);
+
+        GstElement* vpay = gst_bin_get_by_name(GST_BIN(bin), "pay0");
+        GstElement* apay = gst_bin_get_by_name(GST_BIN(bin), "pay1");
+        GstElement* vqueue = NULL;
+        GstElement* vsink = NULL;
+        GstElement* aqueue = NULL;
+        GstElement* asink = NULL;
+
+        if (vpay) {
+            vqueue = gst_element_factory_make("queue", NULL);
+            vsink = gst_element_factory_make("udpsink", NULL);
+        }
+
+        if (apay) {
+            aqueue = gst_element_factory_make("queue", NULL);
+            asink = gst_element_factory_make("udpsink", NULL);
+        }
+
+        gboolean success = TRUE;
+
+        if (vpay && vqueue && vsink) {
+            gst_bin_add_many(GST_BIN(bin), vqueue, vsink, NULL);
+            g_object_set(vqueue, "leaky", 2, "max-size-buffers", 8, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
+            g_object_set(vsink,
+                "host", f->multicast_ip,
+                "port", f->multicast_base_port,
+                "auto-multicast", TRUE,
+                "ttl-mc", 16,
+                "sync", FALSE,
+                "async", FALSE,
+                NULL);
+            if (f->multicast_iface && *f->multicast_iface) {
+                g_object_set(vsink, "multicast-iface", f->multicast_iface, NULL);
+            }
+            if (!gst_element_link_many(vpay, vqueue, vsink, NULL)) {
+                g_printerr("비디오 멀티캐스트 링크 실패\n");
+                success = FALSE;
+            }
+            else {
+                entry.video_port = f->multicast_base_port;
+            }
+        }
+        else {
+            success = FALSE;
+            g_printerr("비디오 RTP 페이로드 요소를 찾을 수 없습니다 (stream=%d)\n", stream_index_1based);
+        }
+
+        if (success && apay) {
+            if (aqueue && asink) {
+                gst_bin_add_many(GST_BIN(bin), aqueue, asink, NULL);
+                g_object_set(aqueue, "leaky", 2, "max-size-buffers", 12, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
+                g_object_set(asink,
+                    "host", f->multicast_ip,
+                    "port", f->multicast_base_port + 2,
+                    "auto-multicast", TRUE,
+                    "ttl-mc", 16,
+                    "sync", FALSE,
+                    "async", FALSE,
+                    NULL);
+                if (f->multicast_iface && *f->multicast_iface) {
+                    g_object_set(asink, "multicast-iface", f->multicast_iface, NULL);
+                }
+                if (!gst_element_link_many(apay, aqueue, asink, NULL)) {
+                    g_printerr("오디오 멀티캐스트 링크 실패\n");
+                    success = FALSE;
+                }
+                else {
+                    entry.audio_port = f->multicast_base_port + 2;
+                }
+            }
+            else {
+                g_printerr("오디오 멀티캐스트 구성 요소 생성 실패\n");
+                success = FALSE;
+            }
+        }
+
+        if (!success) {
+            if (pipeline) {
+                gst_element_set_state(pipeline, GST_STATE_NULL);
+                gst_object_unref(pipeline);
+            }
+            if (vpay) gst_object_unref(vpay);
+            if (apay) gst_object_unref(apay);
+            if (f) g_object_unref(f);
+            entry.pipeline = NULL;
+            return entry;
+        }
+
+        entry.pipeline = pipeline;
+        entry.multicast_ip = f->multicast_ip ? f->multicast_ip : "";
+
+        if (vpay) gst_object_unref(vpay);
+        if (apay) gst_object_unref(apay);
+        if (f) g_object_unref(f);
+
+        return entry;
     }
 
     /* ---------- init / configure / start / cleanup ---------- */
@@ -807,8 +969,25 @@ namespace GStreamerWrapper {
         ctx->factories.reserve(g_configs.size());
         ctx->servers.reserve(g_configs.size());
 
+        ctx->multicast_streams.clear();
+        ctx->multicast_streams.reserve(g_configs.size());
+
         for (size_t i = 0; i < g_configs.size(); ++i) {
             const auto& cfg = g_configs[i];
+
+            if (cfg.enable_multicast) {
+                MulticastEntry entry = create_multicast_pipeline(cfg, static_cast<int>(i + 1));
+                if (entry.pipeline) {
+                    g_print("  - multicast: udp://%s:%d%s\n",
+                        entry.multicast_ip.c_str(), entry.video_port,
+                        entry.audio_port > 0 ? " (audio enabled)" : "");
+                    ctx->multicast_streams.push_back(entry);
+                }
+                else {
+                    g_printerr("멀티캐스트 파이프라인 생성 실패 (stream=%zu)\n", i + 1);
+                }
+                continue;
+            }
 
             // 1) 팩토리 생성
             GstRTSPMediaFactory* f = create_factory_from_config(cfg, static_cast<int>(i + 1));
@@ -854,6 +1033,21 @@ namespace GStreamerWrapper {
             g_print("RTSP 서버가 시작되었습니다. 예: rtsp://%s:%d/screen1\n",
                 g_server_ip.c_str(), se.service_port);
         }
+
+        for (auto& mc : ctx->multicast_streams) {
+            if (!mc.pipeline) continue;
+            GstStateChangeReturn ret = gst_element_set_state(mc.pipeline, GST_STATE_PLAYING);
+            if (ret == GST_STATE_CHANGE_FAILURE) {
+                g_printerr("멀티캐스트 파이프라인 시작 실패 (udp://%s:%d)\n",
+                    mc.multicast_ip.c_str(), mc.video_port);
+            }
+            else {
+                g_print("멀티캐스트 스트리밍 시작: udp://%s:%d%s\n",
+                    mc.multicast_ip.c_str(), mc.video_port,
+                    mc.audio_port > 0 ? " (audio)" : "");
+            }
+        }
+
         g_main_loop_run(ctx->loop);
         return true;
     }
@@ -880,6 +1074,15 @@ namespace GStreamerWrapper {
             if (f) g_object_unref(f);
         }
         ctx->factories.clear();
+
+        for (auto& mc : ctx->multicast_streams) {
+            if (mc.pipeline) {
+                gst_element_set_state(mc.pipeline, GST_STATE_NULL);
+                gst_object_unref(mc.pipeline);
+                mc.pipeline = NULL;
+            }
+        }
+        ctx->multicast_streams.clear();
 
         // 공유 풀/루프 해제
         if (ctx->thread_pool) { g_object_unref(ctx->thread_pool);  ctx->thread_pool = NULL; }
@@ -912,6 +1115,11 @@ namespace GStreamerWrapper {
         for (auto& se : g_ctx.servers) {
             if (se.server) {
                 gst_rtsp_server_client_filter(se.server, force_client_disconnect, NULL);
+            }
+        }
+        for (auto& mc : g_ctx.multicast_streams) {
+            if (mc.pipeline) {
+                gst_element_set_state(mc.pipeline, GST_STATE_NULL);
             }
         }
         if (g_ctx.session_pool) {
