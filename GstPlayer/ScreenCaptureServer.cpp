@@ -991,7 +991,7 @@ namespace GStreamerWrapper {
 
         if (gpu_nv12_caps) gst_caps_unref(gpu_nv12_caps);
 
-        if (!link_queue_to_mux(vq2, tsmux, "video_%u")) {
+        if (!link_queue_to_mux(vq2, tsmux, "sink_%u")) {
             g_printerr("비디오 → MPEG-TS 링크 실패\n");
             gst_object_unref(bin);
             return NULL;
@@ -1002,7 +1002,7 @@ namespace GStreamerWrapper {
         }
 
         if (aq2_mux) {
-            if (!link_queue_to_mux(aq2_mux, tsmux, "audio_%u")) {
+            if (!link_queue_to_mux(aq2_mux, tsmux, "sink_%u")) {
                 g_printerr("오디오 → MPEG-TS 링크 실패\n");
                 gst_object_unref(bin);
                 return NULL;
