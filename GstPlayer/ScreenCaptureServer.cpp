@@ -385,7 +385,7 @@ namespace GStreamerWrapper {
         const gint out_w = (self->out_w & ~1), out_h = (self->out_h & ~1), fps = self->fps;
         const gint a_bps = self->a_bitrate_bps;
         const gint keyint = self->keyint > 0 ? self->keyint : fps;
-
+        g_print("moniidx: %d %d, fps: %d, a_bps: %d, keyint: %d", self->monitor_index, monitor_index,  self->fps, self->a_bitrate_bps, self->keyint);
         g_print("[video] HW accel option: %s\n", self->enable_hw_accel ? "ON" : "OFF");
 
         GstElement* bin = gst_bin_new(NULL);
@@ -466,7 +466,7 @@ namespace GStreamerWrapper {
         g_object_set(vsrc,
             "monitor-index", monitor_index, "show-cursor", TRUE,
             "crop-x", crop_x, "crop-y", crop_y, "crop-width", crop_w, "crop-height", crop_h,
-            "capture-api",1,
+            //"capture-api",1,
             NULL);
 
         // 1) OSD 경로: BGRA로 변환 후 overlay
@@ -758,7 +758,7 @@ namespace GStreamerWrapper {
                 gst_rtsp_media_factory_set_multicast_iface(
                     GST_RTSP_MEDIA_FACTORY(f), cfg.multicast_iface.c_str());
             }
-
+            
             // 멀티캐스트 주소/포트 풀 (예시: 239.255.10.(11+N), base_port=15000+N*20)
             const int base_octet = 11 + stream_index_1based;
             const int base_port = 15000 + stream_index_1based * 20;
@@ -770,6 +770,7 @@ namespace GStreamerWrapper {
                 def << "239.255.10." << base_octet;
                 f->multicast_ip = g_strdup(def.str().c_str());
             }
+            g_print("multicast_iface : %s  , multicast_ip: %s", cfg.multicast_iface.c_str(), f->multicast_ip);
             std::istringstream ip(f->multicast_ip);
             GstRTSPAddressPool* pool = gst_rtsp_address_pool_new();
             gst_rtsp_address_pool_add_range(pool, ip.str().c_str(), ip.str().c_str(),

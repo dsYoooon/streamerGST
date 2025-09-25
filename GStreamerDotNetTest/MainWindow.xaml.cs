@@ -119,12 +119,12 @@ namespace GStreamerDotNetTest
                         AudioDevice = (_audioDevices.Length > 0) ? _audioDevices[0] : null,
                         EnableHardwareAccel = true,
                         EnableOsd = true,
-                        EnableMultiCast = false,
+                        EnableMultiCast = true,
                         BitrateControl = "CBR",
                         Profile = "high",
                         OsdText = $"Screen {i + 1}",
                         MultiCastIP = string.Empty,
-                        MultiCastInterface = (_networkInterfaceNames.Length > 0) ? _networkInterfaceNames[0] : string.Empty
+                        MultiCastInterface = (_networkInterfaceNames.Length > 0) ? _networkInterfaceNames[6] : string.Empty
                     };
                     list.Add(cfg);
                 }
@@ -148,11 +148,11 @@ namespace GStreamerDotNetTest
                         EnableHardwareAccel = false,
                         EnableOsd = true,
                         BitrateControl = "CBR",
-                        EnableMultiCast = false,
+                        EnableMultiCast = true,
                         Profile = "baseline",
                         OsdText = $"Screen {i + 1}",
                         MultiCastIP = string.Empty,
-                        MultiCastInterface = (_networkInterfaceNames.Length > 0) ? _networkInterfaceNames[0] : string.Empty
+                        MultiCastInterface = (_networkInterfaceNames.Length > 0) ? _networkInterfaceNames[6] : string.Empty
                     };
                     list.Add(cfg);
                 }
