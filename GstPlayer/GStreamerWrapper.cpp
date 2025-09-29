@@ -30,7 +30,7 @@ namespace GStreamerWrapper {
     {
         gst_init(nullptr, nullptr);
         //gst_debug_set_default_threshold(GST_LEVEL_INFO);
-        gst_debug_set_default_threshold(GST_LEVEL_WARNING);
+        //gst_debug_set_default_threshold(GST_LEVEL_WARNING);
     }
     static GstBusSyncReply BusSyncHandler(GstBus* bus, GstMessage* msg, gpointer data)
     {

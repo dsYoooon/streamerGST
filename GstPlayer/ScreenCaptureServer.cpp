@@ -67,6 +67,89 @@ namespace GStreamerWrapper {
     static void set_bool_if(GstElement* e, const char* name, gboolean v) {
         if (element_has_property(e, name)) g_object_set(e, name, v, NULL);
     }
+    // 헬퍼: upstream(src pad 보유) → mpegtsmux("sink_%u" request pad) 링크
+   // upstream(src 보유) -> mpegtsmux(request sink pad) pad-link
+    static gboolean link_to_mpegtsmux_safe(GstElement* upstream, GstElement* tsmux,
+        const char* tag_for_log /* "video"/"audio" */)
+    {
+        gboolean ok = FALSE;
+        GstPad* src = NULL;
+        GstPad* sink = NULL;
+
+        // 0) 안전: tsmux는 반드시 bin에 add된 상태여야 함
+        if (!GST_IS_ELEMENT(tsmux) || !GST_OBJECT_PARENT(tsmux)) {
+            g_printerr("%s: tsmux가 bin에 추가되지 않았습니다. (gst_bin_add 후 요청하세요)\n", tag_for_log);
+            return FALSE;
+        }
+
+        // 1) upstream src pad 확보
+        src = gst_element_get_static_pad(upstream, "src");
+        if (!src) {
+            g_printerr("%s: upstream 'src' pad 없음\n", tag_for_log);
+            goto out;
+        }
+
+        // 2) mpegtsmux의 요청 가능한 sink 템플릿 찾기 (이름 하드코딩 X)
+        GstPadTemplate* tmpl = NULL;
+        {
+            // 우선 흔한 이름 두 개를 먼저 시도
+            tmpl = gst_element_get_pad_template(tsmux, "sink_%u");
+            if (!tmpl) tmpl = gst_element_get_pad_template(tsmux, "sink_%d");
+
+            // 그래도 없으면 전체 템플릿에서 요청/싱크 템플릿을 탐색
+            if (!tmpl) {
+                GList* list = gst_element_get_pad_template_list(tsmux);
+                for (GList* l = list; l; l = l->next) {
+                    GstPadTemplate* t = (GstPadTemplate*)l->data;
+                    if (GST_PAD_TEMPLATE_DIRECTION(t) == GST_PAD_SINK &&
+                        GST_PAD_TEMPLATE_PRESENCE(t) == GST_PAD_REQUEST) {
+                        tmpl = t;
+                        break;
+                    }
+                }
+                // NOTE: gst_element_get_pad_template_list는 feature list가 아니라 ref 아님
+                //       여기선 별도 unref 필요 없음
+            }
+
+            if (!tmpl) {
+                g_printerr("%s: mpegtsmux에 요청 가능한 SINK 템플릿이 없습니다.\n", tag_for_log);
+                goto out;
+            }
+        }
+
+        // 3) 요청 패드 생성
+        sink = gst_element_request_pad(tsmux, tmpl, NULL, NULL);
+        if (!sink) {
+            g_printerr("%s: mpegtsmux request pad 생성 실패(템플릿=%s)\n",
+                tag_for_log, GST_PAD_TEMPLATE_NAME_TEMPLATE(tmpl));
+            goto out;
+        }
+
+        // (선택) 디버그: caps 확인
+        if (GstCaps* c = gst_pad_get_current_caps(src)) {
+            g_print("%s → tsmux 링크: upstream caps=%" GST_PTR_FORMAT "\n", tag_for_log, c);
+            gst_caps_unref(c);
+        }
+
+        // 4) pad-link
+        {
+            GstPadLinkReturn r = gst_pad_link(src, sink);
+            if (r != GST_PAD_LINK_OK) {
+                g_printerr("%s → MPEG-TS pad 링크 실패: %s(%d)\n",
+                    tag_for_log, gst_pad_link_get_name(r), r);
+                gst_element_release_request_pad(tsmux, sink);
+                goto out;
+            }
+        }
+
+        ok = TRUE;
+
+    out:
+        if (src)  gst_object_unref(src);
+        if (sink) gst_object_unref(sink);
+        return ok;
+    }
+
 
     // ========================================================================
     // ===== [추가] 안전한 프로퍼티 세터들 =====
@@ -494,8 +577,8 @@ namespace GStreamerWrapper {
         if (self->enable_osd) {
             std::ostringstream css;
             css << "video/x-raw(memory:D3D11Memory),format=BGRA,"
-                << "width=" << out_w << ",height=" << out_h
-                << ",framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
+                //<< "width=" << out_w << ",height=" << out_h
+                << "framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
             if (!link_ok(vsrc, vd3d, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
 
             const gchar* txt = (self->overlay_text && *self->overlay_text) ? self->overlay_text : "";
@@ -503,7 +586,7 @@ namespace GStreamerWrapper {
                 "text", txt,
                 "font-family", "Segoe UI",
                 "font-size", 20.0,     // gdouble
-                "layout-x", 0.03, "layout-y", 0.03, "layout-width", 0.94, "layout-height", 0.94,
+                "layout-x", 0.03 + crop_x, "layout-y", 0.03 + crop_y, "layout-width", 0.94, "layout-height", 0.94,
                 "text-alignment", 0, "paragraph-alignment", 0,
                 "foreground-color", 0xFFFFFFFFu, "background-color", 0x00000000u,
                 "outline-color", 0x80000000u, "shadow-color", 0x80000000u,
@@ -935,19 +1018,19 @@ namespace GStreamerWrapper {
             GstElement* aq1 = gst_element_factory_make("queue", "aqueue1");
             GstElement* aconv = gst_element_factory_make("audioconvert", NULL);
             GstElement* ares = gst_element_factory_make("audioresample", NULL);
-            GstElement* acaps = gst_element_factory_make("capsfilter", "acaps");
+            //GstElement* acaps = gst_element_factory_make("capsfilter", "acaps");
             GstElement* aq2 = gst_element_factory_make("queue", "aqueue2");
             GstElement* aenc = gst_element_factory_make("avenc_aac", "aenc");
             GstElement* aparse = gst_element_factory_make("aacparse", "aparser");
             aq2_mux = gst_element_factory_make("queue", "aqueue_ts");
 
-            if (!asrc || !aq1 || !aconv || !ares || !acaps || !aq2 || !aenc || !aparse || !aq2_mux) {
+            if (!asrc || !aq1 || !aconv || !ares || /*!acaps ||*/ !aq2 || !aenc || !aparse || !aq2_mux) {
                 g_warning("오디오 요소 생성 실패, 비디오만 스트리밍합니다.");
                 if (asrc) gst_object_unref(asrc);
                 if (aq1) gst_object_unref(aq1);
                 if (aconv) gst_object_unref(aconv);
                 if (ares) gst_object_unref(ares);
-                if (acaps) gst_object_unref(acaps);
+                //if (acaps) gst_object_unref(acaps);
                 if (aq2) gst_object_unref(aq2);
                 if (aenc) gst_object_unref(aenc);
                 if (aparse) gst_object_unref(aparse);
@@ -955,7 +1038,7 @@ namespace GStreamerWrapper {
                 aq2_mux = NULL;
             }
             else {
-                gst_bin_add_many(GST_BIN(bin), asrc, aq1, aconv, ares, acaps, aq2, aenc, aparse, aq2_mux, NULL);
+                gst_bin_add_many(GST_BIN(bin), asrc, aq1, aconv, ares, /*acaps,*/ aq2, aenc, aparse, aq2_mux, NULL);
 
                 g_object_set(asrc,
                     "loopback", TRUE,
@@ -974,16 +1057,16 @@ namespace GStreamerWrapper {
                     "format", G_TYPE_STRING, "S16LE",
                     "rate", G_TYPE_INT, 48000,
                     "channels", G_TYPE_INT, 2, NULL);
-                g_object_set(acaps, "caps", a_caps, NULL);
+                //g_object_set(acaps, "caps", a_caps, NULL);
                 gst_caps_unref(a_caps);
 
                 g_object_set(aenc,
                     "bitrate", a_bps,
                     NULL);
 
-                if (!gst_element_link_many(asrc, aq1, aconv, ares, acaps, aq2, aenc, aparse, aq2_mux, NULL)) {
+                if (!gst_element_link_many(asrc, aq1, aconv, ares,/* acaps, */aq2, aenc, aparse, aq2_mux, NULL)) {
                     g_warning("오디오 파이프라인 연결 실패, 비디오만 스트리밍합니다.");
-                    gst_bin_remove_many(GST_BIN(bin), asrc, aq1, aconv, ares, acaps, aq2, aenc, aparse, aq2_mux, NULL);
+                    gst_bin_remove_many(GST_BIN(bin), asrc, aq1, aconv, ares, /*acaps,*/ aq2, aenc, aparse, aq2_mux, NULL);
                     aq2_mux = NULL;
                 }
             }
@@ -991,7 +1074,8 @@ namespace GStreamerWrapper {
 
         if (gpu_nv12_caps) gst_caps_unref(gpu_nv12_caps);
 
-        if (!link_queue_to_mux(vq2, tsmux, "sink_%u")) {
+        // vqueue2(= H.264 byte-stream/alignment=au caps 적용된 큐) → mpegtsmux
+        if (!link_to_mpegtsmux_safe(vq2, tsmux,  "video")) {
             g_printerr("비디오 → MPEG-TS 링크 실패\n");
             gst_object_unref(bin);
             return NULL;
@@ -1002,11 +1086,12 @@ namespace GStreamerWrapper {
         }
 
         if (aq2_mux) {
-            if (!link_queue_to_mux(aq2_mux, tsmux, "sink_%u")) {
+            if (!link_to_mpegtsmux_safe(aq2_mux, tsmux, "audio")) {
                 g_printerr("오디오 → MPEG-TS 링크 실패\n");
                 gst_object_unref(bin);
                 return NULL;
             }
+          
         }
 
         if (!gst_element_link(tsmux, tsout)) {
@@ -1108,7 +1193,7 @@ namespace GStreamerWrapper {
         if (f->enable_multicast) {
             const int base_octet = 11 + stream_index_1based;
             const int base_port = 15000 + stream_index_1based * 20;
-            f->multicast_base_port = base_port;
+            f->multicast_base_port = cfg.port;
             if (!f->multicast_ip) {
                 std::ostringstream def;
                 def << "239.255.10." << base_octet;
