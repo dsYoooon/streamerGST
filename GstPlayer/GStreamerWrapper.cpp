@@ -3,8 +3,9 @@
 #include "ScreenCaptureServer.h"
 
 #include <vector>
+#include <string>
 #include <sstream>
-#include <msclr/marshal_cppstd.h>
+#include <vcclr.h>
 #include <gst/gstdevicemonitor.h>
 #include <gst/gstdevice.h>
 #include <objbase.h>
@@ -25,6 +26,27 @@ namespace GStreamerWrapper {
     using namespace System::Runtime::InteropServices; // GCHandle을 위해 추가
     using namespace System::Diagnostics;             // Debug 클래스를 위해 추가
     using namespace System::Collections::Generic;
+    using namespace System::Text;
+
+    namespace {
+        std::string ToUtf8String(String^ value)
+        {
+            if (String::IsNullOrEmpty(value))
+            {
+                return std::string();
+            }
+
+            array<Byte>^ utf8Bytes = Encoding::UTF8->GetBytes(value);
+            std::string result;
+            if (utf8Bytes->Length > 0)
+            {
+                pin_ptr<Byte> pinned = &utf8Bytes[0];
+                result.assign(reinterpret_cast<char*>(pinned),
+                              reinterpret_cast<char*>(pinned) + utf8Bytes->Length);
+            }
+            return result;
+        }
+    }
 
     void GstPlayer::Initialize()
     {
@@ -230,7 +252,7 @@ namespace GStreamerWrapper {
     {
         Stop();
 
-        IntPtr ipPtr = Marshal::StringToHGlobalAnsi(serverIp);
+        std::string serverIpUtf8 = ToUtf8String(serverIp);
 
         std::vector<StreamConfigNative> nativeConfigs;
         for each (StreamConfig cfg in configs)
@@ -249,27 +271,20 @@ namespace GStreamerWrapper {
             ncfg.keyframe_interval = cfg.KeyframeInterval;
             ncfg.enable_audio = cfg.EnableAudio;
 			ncfg.enable_multicast = cfg.EnableMultiCast;
-            if (cfg.AudioDevice != nullptr)
-                ncfg.audio_device = msclr::interop::marshal_as<std::string>(cfg.AudioDevice);
+            ncfg.audio_device = ToUtf8String(cfg.AudioDevice);
             ncfg.enable_hw_accel = cfg.EnableHardwareAccel;
             ncfg.enable_osd = cfg.EnableOsd;
-            if (cfg.Profile != nullptr)
-                ncfg.profile = msclr::interop::marshal_as<std::string>(cfg.Profile);
-            if (cfg.BitrateControl != nullptr)
-                ncfg.bitrate_control = msclr::interop::marshal_as<std::string>(cfg.BitrateControl);
-            if (cfg.OsdText != nullptr)
-                 ncfg.overlay_text = msclr::interop::marshal_as<std::string>(cfg.OsdText);
-            if (cfg.MultiCastIP != nullptr)
-                ncfg.multicast_ip = msclr::interop::marshal_as<std::string>(cfg.MultiCastIP);
-            if (cfg.MultiCastInterface != nullptr)
-                ncfg.multicast_iface = msclr::interop::marshal_as<std::string>(cfg.MultiCastInterface);
+            ncfg.profile = ToUtf8String(cfg.Profile);
+            ncfg.bitrate_control = ToUtf8String(cfg.BitrateControl);
+            ncfg.overlay_text = ToUtf8String(cfg.OsdText);
+            ncfg.multicast_ip = ToUtf8String(cfg.MultiCastIP);
+            ncfg.multicast_iface = ToUtf8String(cfg.MultiCastInterface);
             nativeConfigs.push_back(ncfg);
         }
 
-        RunScreenCaptureRtspServer(static_cast<const char*>(ipPtr.ToPointer()),
+        RunScreenCaptureRtspServer(serverIpUtf8.empty() ? nullptr : serverIpUtf8.c_str(),
                                    nativeConfigs.data(),
                                    (int)nativeConfigs.size());
-        Marshal::FreeHGlobal(ipPtr);
     }
 
     void GstPlayer::Stop()
