@@ -53,7 +53,7 @@ namespace GStreamerWrapper {
         void StartScreenCapture(StreamConfig config);
         void StartScreenCaptureServer(String^ serverIp, array<StreamConfig>^ configs);
         void Stop();
-
+        void StopPreview();
         static void Initialize();
         static void Deinitialize();
         static array<String^>^ GetAudioDevices();

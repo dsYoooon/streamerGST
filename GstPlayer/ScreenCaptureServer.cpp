@@ -53,8 +53,8 @@ namespace GStreamerWrapper {
 
     static RtspServerContext g_ctx;
     static std::thread g_server_thread;
-    static std::mutex g_pipeline_build_mutex;
-
+    //static std::mutex g_pipeline_build_mutex;
+    static std::mutex& pipeline_build_mutex() { static std::mutex* m = new std::mutex(); return *m; }
     /* ---------- small utils ---------- */
     static gboolean element_has_property(GstElement* e, const char* name) {
         if (!e || !name) return FALSE;
@@ -308,7 +308,7 @@ namespace GStreamerWrapper {
 #endif
 
     static gboolean my_rtsp_media_prepare_impl(GstRTSPMedia* media, GstRTSPThread* thread) {
-        std::unique_lock<std::mutex> lock(g_pipeline_build_mutex);
+        std::unique_lock<std::mutex> lock(pipeline_build_mutex());
         GstRTSPMediaClass* parent_class = GST_RTSP_MEDIA_CLASS(my_rtsp_media_parent_class);
         if (parent_class->prepare) {
             return parent_class->prepare(media, thread);
@@ -321,7 +321,7 @@ namespace GStreamerWrapper {
     }
 
     static gboolean my_rtsp_media_unprepare(GstRTSPMedia* media) {
-        std::unique_lock<std::mutex> lock(g_pipeline_build_mutex);
+        std::unique_lock<std::mutex> lock(pipeline_build_mutex());
         GstRTSPMediaClass* parent_class = GST_RTSP_MEDIA_CLASS(my_rtsp_media_parent_class);
         if (parent_class->unprepare) {
             return parent_class->unprepare(media);

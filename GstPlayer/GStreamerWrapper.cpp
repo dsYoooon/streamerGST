@@ -52,7 +52,8 @@ namespace GStreamerWrapper {
     {
         gst_init(nullptr, nullptr);
         //gst_debug_set_default_threshold(GST_LEVEL_INFO);
-        //gst_debug_set_default_threshold(GST_LEVEL_WARNING);
+        gst_debug_set_default_threshold(GST_LEVEL_WARNING);
+        //gst_debug_set_default_threshold(GST_LEVEL_MEMDUMP);
     }
     static GstBusSyncReply BusSyncHandler(GstBus* bus, GstMessage* msg, gpointer data)
     {
@@ -200,6 +201,7 @@ namespace GStreamerWrapper {
     {
         Stop();
     }
+
     void GstPlayer::StartScreenCapture(StreamConfig config)
     {
         Stop();
@@ -228,7 +230,7 @@ namespace GStreamerWrapper {
         GstCaps* caps = gst_caps_from_string(caps_str.str().c_str());
         g_object_set(capsfilter, "caps", caps, NULL);
         gst_caps_unref(caps);
-        gst_debug_set_default_threshold(GST_LEVEL_INFO);
+        //gst_debug_set_default_threshold(GST_LEVEL_INFO);
         gst_bin_add_many(GST_BIN(pipeline), src, conv, capsfilter, sink, NULL);
         if (!gst_element_link_many(src, conv, capsfilter, sink, NULL)) {
             gst_debug_set_default_threshold(GST_LEVEL_ERROR);
@@ -299,6 +301,19 @@ namespace GStreamerWrapper {
         }
         // RTSP 서버가 실행 중이면 중지합니다.
         StopScreenCaptureRtspServer();
+    }
+
+    void GstPlayer::StopPreview()
+    {
+        if (pipeline) {
+            gst_element_set_state(pipeline, GST_STATE_NULL);
+            gst_object_unref(pipeline);
+            pipeline = nullptr;
+        }
+        if (gcHandle.IsAllocated) {
+            gcHandle.Free();
+        }
+        
     }
 
     void GstPlayer::BusMessageCallback(GstBus* bus, GstMessage* msg, gpointer data)
