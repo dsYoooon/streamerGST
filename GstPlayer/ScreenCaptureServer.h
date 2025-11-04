@@ -19,6 +19,7 @@ struct StreamConfigNative {
     int bitrate_kbps;
     int keyframe_interval;
     int port;
+    int streamIndex;
     bool enable_audio;
 	bool enable_multicast;
     std::string audio_device;

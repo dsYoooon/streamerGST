@@ -23,6 +23,7 @@ namespace GStreamerWrapper {
         int BitrateKbps;
         int KeyframeInterval;
 		int Port;
+		int StreamIndex;
         bool EnableAudio;
         String^ AudioDevice;
         bool EnableHardwareAccel;

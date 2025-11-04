@@ -208,11 +208,12 @@ namespace GStreamerWrapper {
 
         pipeline = gst_pipeline_new("screen-preview");
         GstElement* src = gst_element_factory_make("d3d11screencapturesrc", "src");
+		GstElement* queue = gst_element_factory_make("queue", "que");
         GstElement* conv = gst_element_factory_make("d3d11convert", "conv");
         GstElement* capsfilter = gst_element_factory_make("capsfilter", "caps");
         GstElement* sink = gst_element_factory_make("d3d11videosink", "sink");
 
-        if (!pipeline || !src || !conv || !capsfilter || !sink) {
+        if (!pipeline || !src || !queue|| !conv || !capsfilter || !sink) {
             g_printerr("파이프라인 생성 실패\n");
             if (pipeline) { gst_object_unref(pipeline); pipeline = nullptr; }
             return;
@@ -231,8 +232,8 @@ namespace GStreamerWrapper {
         g_object_set(capsfilter, "caps", caps, NULL);
         gst_caps_unref(caps);
         //gst_debug_set_default_threshold(GST_LEVEL_INFO);
-        gst_bin_add_many(GST_BIN(pipeline), src, conv, capsfilter, sink, NULL);
-        if (!gst_element_link_many(src, conv, capsfilter, sink, NULL)) {
+        gst_bin_add_many(GST_BIN(pipeline), src, queue , conv, capsfilter, sink, NULL);
+        if (!gst_element_link_many(src, queue , conv, capsfilter, sink, NULL)) {
             gst_debug_set_default_threshold(GST_LEVEL_ERROR);
             g_printerr("요소 연결 실패\n");
             gst_object_unref(pipeline);
@@ -273,6 +274,7 @@ namespace GStreamerWrapper {
             ncfg.keyframe_interval = cfg.KeyframeInterval;
             ncfg.enable_audio = cfg.EnableAudio;
 			ncfg.enable_multicast = cfg.EnableMultiCast;
+			ncfg.streamIndex = cfg.StreamIndex;
             ncfg.audio_device = ToUtf8String(cfg.AudioDevice);
             ncfg.enable_hw_accel = cfg.EnableHardwareAccel;
             ncfg.enable_osd = cfg.EnableOsd;

@@ -564,11 +564,12 @@ namespace GStreamerWrapper {
             gst_bin_add(GST_BIN(bin), vdupload);
         if (vd12convert)
             gst_bin_add(GST_BIN(bin), vd12convert);
-
+		int crop_width = crop_w ==out_w ? 0 : crop_w;
+        int crop_height = crop_h == out_h ? 0 : crop_h;
         // 캡처 기본 설정
         g_object_set(vsrc,
             "monitor-index", monitor_index, "show-cursor", TRUE,
-            "crop-x", crop_x, "crop-y", crop_y, "crop-width", crop_w, "crop-height", crop_h,
+            "crop-x", crop_x, "crop-y", crop_y, "crop-width", crop_width, "crop-height", crop_height,
             //"capture-api",1,
             NULL);
 
@@ -1123,18 +1124,23 @@ namespace GStreamerWrapper {
         }
         gst_rtsp_media_factory_set_media_gtype(GST_RTSP_MEDIA_FACTORY(object), MY_TYPE_RTSP_MEDIA);
     }
+    // ★ 2. 기존 my_media_factory_finalize 함수를 아래 내용으로 전체 교체하세요.
     static void my_media_factory_finalize(GObject* object) {
         MyMediaFactory* self = (MyMediaFactory*)object;
         if (self->overlay_elem) {
             g_object_remove_weak_pointer(G_OBJECT(self->overlay_elem), (gpointer*)&self->overlay_elem);
             self->overlay_elem = NULL;
         }
+
+        // g_strdup으로 할당된 메모리만 해제
         if (self->overlay_text) { g_free(self->overlay_text);    self->overlay_text = NULL; }
         if (self->audio_device) { g_free(self->audio_device);    self->audio_device = NULL; }
         if (self->bitrate_control) { g_free(self->bitrate_control); self->bitrate_control = NULL; }
         if (self->profile) { g_free(self->profile);         self->profile = NULL; }
         if (self->multicast_ip) { g_free(self->multicast_ip);   self->multicast_ip = NULL; }
         if (self->multicast_iface) { g_free(self->multicast_iface); self->multicast_iface = NULL; }
+
+        // 부모 클래스의 finalize 호출
         G_OBJECT_CLASS(my_media_factory_parent_class)->finalize(object);
     }
     static void my_media_factory_class_init(MyMediaFactoryClass* klass) {
@@ -1159,9 +1165,11 @@ namespace GStreamerWrapper {
         self->multicast_base_port = 0;
     }
 
+    // ★ 3. 기존 create_media_factory_base 함수를 아래 내용으로 전체 교체하세요.
     static MyMediaFactory* create_media_factory_base(const StreamConfigNative& cfg, int stream_index_1based) {
         MyMediaFactory* f = (MyMediaFactory*)g_object_new(my_media_factory_get_type(), NULL);
 
+        // 정수형 및 bool 멤버 설정
         f->monitor_index = cfg.monitor_index;
         f->crop_x = cfg.crop_x;  f->crop_y = cfg.crop_y;  f->crop_w = cfg.crop_w;  f->crop_h = cfg.crop_h;
         f->out_w = cfg.width > 0 ? cfg.width : 1920;
@@ -1170,15 +1178,19 @@ namespace GStreamerWrapper {
         f->v_bitrate_kbps = cfg.bitrate_kbps > 0 ? cfg.bitrate_kbps : 8000;
         f->a_bitrate_bps = 128000;
         f->enable_audio = cfg.enable_audio;
-        set_string_field(&f->audio_device, cfg.audio_device);
         f->enable_hw_accel = cfg.enable_hw_accel;
         f->enable_osd = cfg.enable_osd;
         f->keyint = cfg.keyframe_interval > 0 ? cfg.keyframe_interval : f->fps;
         f->enable_multicast = cfg.enable_multicast;
 
+        // 문자열 멤버들을 set_string_field 헬퍼를 사용해 안전하게 복사
+        set_string_field(&f->audio_device, cfg.audio_device);
         set_string_field(&f->bitrate_control, cfg.bitrate_control.empty() ? std::string("CBR") : cfg.bitrate_control);
         set_string_field(&f->profile, cfg.profile.empty() ? std::string("high") : cfg.profile);
-
+        set_string_field(&f->multicast_iface, cfg.multicast_iface);
+        set_string_field(&f->multicast_ip, cfg.multicast_ip);
+        
+        // OsdText 설정
         if (!cfg.overlay_text.empty()) {
             set_string_field(&f->overlay_text, cfg.overlay_text);
         }
@@ -1187,9 +1199,7 @@ namespace GStreamerWrapper {
             set_string_field(&f->overlay_text, def.str());
         }
 
-        set_string_field(&f->multicast_iface, cfg.multicast_iface);
-        set_string_field(&f->multicast_ip, cfg.multicast_ip);
-
+        // 멀티캐스트 관련 설정
         if (f->enable_multicast) {
             const int base_octet = 11 + stream_index_1based;
             const int base_port = 15000 + stream_index_1based * 20;
@@ -1299,6 +1309,7 @@ namespace GStreamerWrapper {
             NULL);
         if (f->multicast_iface && *f->multicast_iface) {
             g_object_set(udpsink, "multicast-iface", f->multicast_iface, NULL);
+			g_print("[multicast] 멀티캐스트 인터페이스 : % s\n", f->multicast_iface);
         }
 
         if (!gst_element_link(bin, udpsink)) {
@@ -1384,7 +1395,7 @@ namespace GStreamerWrapper {
 
             // 3) 마운트
             se.mounts = gst_rtsp_server_get_mount_points(se.server);
-            std::ostringstream mount; mount << "/screen" << (cfg.port - 10553);
+            std::ostringstream mount; mount << "/screen" << (cfg.streamIndex);
             gst_rtsp_mount_points_add_factory(se.mounts, mount.str().c_str(), f);
 
             ctx->servers.push_back(se);
