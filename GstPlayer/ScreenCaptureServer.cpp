@@ -1,4 +1,4 @@
-﻿// ScreenCaptureServer.cpp (encodebin + per-option HW accel on/off, multi-vendor stable)
+// ScreenCaptureServer.cpp (encodebin + per-option HW accel on/off, multi-vendor stable)
 // Per-stream RTSP port (server-per-stream) version
 // 2025-09-17:
 //  - Shared GLib context / thread-pool / session-pool
@@ -384,7 +384,7 @@ namespace GStreamerWrapper {
             fname, mf->v_bitrate_kbps, mf->keyint);
 
         // 공통: 정수형은 그대로, 문자열/enum은 안전세터로
-        set_int_if(elem, "bitrate", mf->v_bitrate_kbps * 1000);
+        set_int_if(elem, "bitrate", mf->v_bitrate_kbps);
         set_int_if(elem, "key-int-max", mf->keyint);
         set_int_if(elem, "gop-size", mf->keyint);
         if (mf->profile && *mf->profile) {
@@ -541,7 +541,7 @@ namespace GStreamerWrapper {
         else {
             venc = gst_element_factory_make("x264enc", "venc");
         }
-        
+        g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
 
         GstElement* vparse = gst_element_factory_make("h264parse", "vparse");
         GstElement* vcf = gst_element_factory_make("capsfilter", "vpaycaps");
@@ -564,8 +564,8 @@ namespace GStreamerWrapper {
             gst_bin_add(GST_BIN(bin), vdupload);
         if (vd12convert)
             gst_bin_add(GST_BIN(bin), vd12convert);
-		int crop_width = crop_w ==out_w ? 0 : crop_w;
-        int crop_height = crop_h == out_h ? 0 : crop_h;
+        int crop_width = crop_w;// == out_w ? 0 : crop_w;
+        int crop_height = crop_h;// == out_h ? 0 : crop_h;
         // 캡처 기본 설정
         g_object_set(vsrc,
             "monitor-index", monitor_index, "show-cursor", TRUE,
@@ -626,19 +626,37 @@ namespace GStreamerWrapper {
             GstCaps* restr = gst_caps_copy(gpu_nv12_caps); // NV12 + D3D11Memory
             GstEncodingProfile* vprof = (GstEncodingProfile*)
                 gst_encoding_video_profile_new(h264_caps, NULL, restr, 1);
-            g_object_set(venc, "profile", vprof, NULL);
+            if (nv_system)
+            {
+                const gchar *rc = self->bitrate_control ? self->bitrate_control : "CBR";
+                const gchar *rc_nick = (g_ascii_strcasecmp(rc, "VBR") == 0) ? "vbr" : "cbr";
+                g_object_set(venc, 
+                "bitrate", self->v_bitrate_kbps,
+                 "key-int-max", self->keyint,
+                "gop-size", self->keyint,
+                "rc-mode", rc_nick,
+                 NULL);
+
+
+                
+            }
+            else
+            {
+                g_object_set(venc, "profile", vprof, NULL);
+            }
+
+            
             gst_encoding_profile_unref(vprof);
             gst_caps_unref(h264_caps);
 
             // encodebin 내부로 선택된 실제 인코더 튜닝
-            g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
+            
 
             // ★ 제로카피 경로: vd3d2 -> vq1 (D3D11 NV12) -> encodebin
             if (link_ok(vd3d2, vq1, gst_caps_ref(gpu_nv12_caps)) &&
                 link_queue_to_encoder(vq1, vdupload, vd12convert, venc)) {
                 zero_copy_ok = TRUE;
-                g_print("[video] Zero-copy D3D11Memory→%sencodebin 활성화\n",
-                    vdupload ? (vd12convert ? "d3d12upload→d3d12convert→" : "d3d12upload→") : "");
+                //g_print("[video] Zero-copy D3D11Memory→%sencodebin 활성화\n", vdupload ? (vd12convert ? "d3d12upload→d3d12convert→" : "d3d12upload→") : "");
             }
             else {
                 gst_element_unlink(vd3d2, vq1);
@@ -720,22 +738,63 @@ namespace GStreamerWrapper {
         if (!link_ok(vq2, vpay)) { gst_object_unref(bin); return NULL; }
 
         /* --- 오디오 (선택) --- */
-        if (self->enable_audio) {
-            GstElement* asrc = gst_element_factory_make("wasapi2src", "asrc");
-            if (!asrc) asrc = gst_element_factory_make("wasapisrc", "asrc"); // 폴백
-            GstElement* aq1 = gst_element_factory_make("queue", "aqueue1");
-            GstElement* aconv = gst_element_factory_make("audioconvert", NULL);
-            GstElement* ares = gst_element_factory_make("audioresample", NULL);
-            GstElement* acaps = gst_element_factory_make("capsfilter", "acaps");
-            GstElement* aq2 = gst_element_factory_make("queue", "aqueue2");
-            GstElement* aenc = gst_element_factory_make("opusenc", "aenc");
-            GstElement* apay = gst_element_factory_make("rtpopuspay", "pay1");
+           /* --- 오디오 (선택) --- */
+        if (self->enable_audio)
+        {
+            GstElement *asrc = gst_element_factory_make("wasapi2src", "asrc");
+            if (!asrc)
+                asrc = gst_element_factory_make("wasapisrc", "asrc"); // 폴백
 
-            if (!asrc || !aq1 || !aconv || !ares || !acaps || !aq2 || !aenc || !apay) {
-                g_warning("오디오 요소 생성 실패, 비디오만 스트리밍합니다.");
+            GstElement *aq1 = gst_element_factory_make("queue", "aqueue1");
+            GstElement *aconv = gst_element_factory_make("audioconvert", NULL);
+            GstElement *ares = gst_element_factory_make("audioresample", NULL);
+            GstElement *acaps = gst_element_factory_make("capsfilter", "acaps");
+            GstElement *aq2 = gst_element_factory_make("queue", "aqueue2");
+
+            // 1차: AAC 인코더 + AAC RTP payloader 시도
+            GstElement *aenc = gst_element_factory_make("voaacenc", "aenc");
+            GstElement *apay = gst_element_factory_make("rtpmp4gpay", "pay1");
+
+            gboolean use_aac = (aenc != NULL && apay != NULL);
+
+            if (!use_aac)
+            {
+                g_warning("AAC 인코더(avenc_aac) 또는 rtpmp4gpay 생성 실패 → Opus로 폴백합니다.");
+
+                if (aenc)
+                {
+                    gst_object_unref(aenc);  aenc = NULL;
+                }
+                if (apay)
+                {
+                    gst_object_unref(apay);  apay = NULL;
+                }
+
+// Opus + rtpopuspay (기존에 잘 되던 조합)
+                aenc = gst_element_factory_make("opusenc", "aenc");
+                apay = gst_element_factory_make("rtpopuspay", "pay1");
+
+                if (aenc)
+                {
+                    g_object_set(aenc,
+                        "bitrate", self->a_bitrate_bps,
+                        "frame-size", 40,
+                        "inband-fec", TRUE,
+                        "packet-loss-percentage", 10,
+                        "complexity", 5,
+                        NULL);
+                }
             }
-            else {
-                gst_bin_add_many(GST_BIN(bin), asrc, aq1, aconv, ares, acaps, aq2, aenc, apay, NULL);
+
+            if (!asrc || !aq1 || !aconv || !ares || !acaps || !aq2 || !aenc || !apay)
+            {
+                g_warning("오디오 요소 생성 실패 (asrc=%p, aenc=%p, apay=%p). 비디오만 스트리밍합니다.",
+                    asrc, aenc, apay);
+            }
+            else
+            {
+                gst_bin_add_many(GST_BIN(bin),
+                    asrc, aq1, aconv, ares, acaps, aq2, aenc, apay, NULL);
 
                 g_object_set(asrc,
                     "loopback", TRUE,
@@ -743,31 +802,85 @@ namespace GStreamerWrapper {
                     "loopback-silence-on-device-mute", TRUE,
                     NULL);
 
-                g_object_set(aq1, "leaky", 2, "max-size-buffers", 20, "max-size-bytes", 0,
+                g_object_set(aq1, "leaky", 2,
+                    "max-size-buffers", 20,
+                    "max-size-bytes", 0,
                     "max-size-time", (gint64)0, NULL);
-                g_object_set(aq2, "leaky", 2, "max-size-buffers", 12, "max-size-bytes", 0,
+                g_object_set(aq2, "leaky", 2,
+                    "max-size-buffers", 12,
+                    "max-size-bytes", 0,
                     "max-size-time", (gint64)0, NULL);
 
-                GstCaps* a_caps = gst_caps_new_simple("audio/x-raw",
+       // wasapi2src → raw audio caps
+                GstCaps *a_caps = gst_caps_new_simple("audio/x-raw",
                     "format", G_TYPE_STRING, "S16LE",
                     "rate", G_TYPE_INT, 48000,
-                    "channels", G_TYPE_INT, 2, NULL);
+                    "channels", G_TYPE_INT, 2,
+                    NULL);
                 g_object_set(acaps, "caps", a_caps, NULL);
                 gst_caps_unref(a_caps);
 
-                g_object_set(aenc,
-                    "bitrate", a_bps,
-                    "frame-size", 40,
-                    "inband-fec", TRUE,
-                    "packet-loss-percentage", 10,
-                    "complexity", 5, NULL);
+                if (use_aac)
+                {
+      // AAC 인코더 설정 (bits per second)
+                    g_object_set(aenc,
+                        "bitrate", self->a_bitrate_bps,
+                        NULL);
+
+                    // 필요하면 여기 사이에 aacparse 추가 가능:
+                    // GstElement* aparse = gst_element_factory_make("aacparse", "aparse");
+                    // gst_bin_add(GST_BIN(bin), aparse);
+                    // 그리고 아래 링크 순서를 조정 (aq2 -> aenc -> aparse -> apay)
+                }
+
                 g_object_set(apay, "pt", 97, NULL);
 
-                if (!gst_element_link_many(asrc, aq1, aconv, ares, acaps, aq2, aenc, apay, NULL)) {
-                    g_warning("오디오 파이프라인 연결 실패, 비디오만 스트리밍합니다.");
+                // ---- 링크를 한 단계씩 체크해서 어디서 깨지는지 찍어줌 ----
+                gboolean ok = TRUE;
+
+                if (!gst_element_link(asrc, aq1))
+                {
+                    g_warning("오디오 링크 실패: asrc -> aqueue1");
+                    ok = FALSE;
+                }
+                if (ok && !gst_element_link(aq1, aconv))
+                {
+                    g_warning("오디오 링크 실패: aqueue1 -> audioconvert");
+                    ok = FALSE;
+                }
+                if (ok && !gst_element_link(aconv, ares))
+                {
+                    g_warning("오디오 링크 실패: audioconvert -> audioresample");
+                    ok = FALSE;
+                }
+                if (ok && !gst_element_link(ares, acaps))
+                {
+                    g_warning("오디오 링크 실패: audioresample -> acaps");
+                    ok = FALSE;
+                }
+                if (ok && !gst_element_link(acaps, aq2))
+                {
+                    g_warning("오디오 링크 실패: acaps -> aqueue2");
+                    ok = FALSE;
+                }
+                if (ok && !gst_element_link(aq2, aenc))
+                {
+                    g_warning("오디오 링크 실패: aqueue2 -> aenc");
+                    ok = FALSE;
+                }
+                if (ok && !gst_element_link(aenc, apay))
+                {
+                    g_warning("오디오 링크 실패: aenc -> apay (인코더 출력→RTP payloader)");
+                    ok = FALSE;
+                }
+
+                if (!ok)
+                {
+                    g_warning("오디오 파이프라인 링크 실패 → asrc가 not-linked로 떨어질 수 있습니다. 비디오만 스트리밍합니다.");
                 }
             }
         }
+
 
         if (gpu_nv12_caps) gst_caps_unref(gpu_nv12_caps);
         return bin;
@@ -853,7 +966,7 @@ namespace GStreamerWrapper {
         else {
             venc = gst_element_factory_make("x264enc", "venc");
         }
-
+        g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
         GstElement* vparse = gst_element_factory_make("h264parse", "vparse");
         GstElement* vcf = gst_element_factory_make("capsfilter", "vpaycaps");
         GstElement* vq2 = gst_element_factory_make("queue", "vqueue2");
@@ -933,13 +1046,12 @@ namespace GStreamerWrapper {
             gst_encoding_profile_unref(vprof);
             gst_caps_unref(h264_caps);
 
-            g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
+            
 
             if (link_ok(vd3d2, vq1, gst_caps_ref(gpu_nv12_caps)) &&
                 link_queue_to_encoder(vq1, vdupload, vd12convert, venc)) {
                 zero_copy_ok = TRUE;
-                g_print("[video] Zero-copy D3D11Memory→%sencodebin 활성화\n",
-                    vdupload ? (vd12convert ? "d3d12upload→d3d12convert→" : "d3d12upload→") : "");
+                //g_print("[video] Zero-copy D3D11Memory→%sencodebin 활성화\n",  vdupload ? (vd12convert ? "d3d12upload→d3d12convert→" : "d3d12upload→") : "");
             }
             else {
                 gst_element_unlink(vd3d2, vq1);
@@ -1308,7 +1420,7 @@ namespace GStreamerWrapper {
             "async", FALSE,
             NULL);
         if (f->multicast_iface && *f->multicast_iface) {
-            g_object_set(udpsink, "multicast-iface", f->multicast_iface, NULL);
+            g_object_set(udpsink, "bind-address", f->multicast_iface, NULL);
 			g_print("[multicast] 멀티캐스트 인터페이스 : % s\n", f->multicast_iface);
         }
 

@@ -39,7 +39,48 @@ namespace GStreamerDotNetTest
         }
 
         private readonly List<StreamSetting> _streamSettings = new List<StreamSetting>();
+        // using System.Net.NetworkInformation; // 파일 상단에 이미 있습니다.
+        // using System.Diagnostics; // 파일 상단에 이미 있습니다.
+        // using System.Linq; // 파일 상단에 이미 있습니다.
 
+        /// <summary>
+        /// 네트워크 인터페이스의 친숙한 이름(Name)을 기반으로
+        /// 해당 인터페이스의 첫 번째 IPv4 주소를 문자열로 반환합니다.
+        /// </summary>
+        private string GetIpAddressFromInterfaceName(string interfaceName)
+        {
+            if (string.IsNullOrWhiteSpace(interfaceName))
+                return null;
+
+            try
+            {
+                // 모든 네트워크 인터페이스 순회
+                foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    // C#에서 가져온 이름과 일치하는 인터페이스를 찾음
+                    if (nic.Name.Equals(interfaceName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // 해당 인터페이스의 IP 속성 가져오기
+                        var ipProps = nic.GetIPProperties();
+
+                        // Unicast 주소 중에서 첫 번째 IPv4 주소를 찾아 반환
+                        foreach (UnicastIPAddressInformation ip in ipProps.UnicastAddresses)
+                        {
+                            if (ip.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                            {
+                                return ip.Address.ToString(); // 예: "192.168.10.15"
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to get IP from interface name '{interfaceName}': {ex.Message}");
+            }
+
+            return null; // IPv4 주소를 찾지 못함
+        }
         public MainWindow()
         {
             InitializeComponent();
@@ -79,7 +120,7 @@ namespace GStreamerDotNetTest
             Textbox_numofstreamer.Text = defaultStreamCount.ToString();
             UpdateStreamTabs(defaultStreamCount);
             // =================================================================
-            startServer(true);
+            //startServer(true);
         }
 
         // ★ 추가된 부분: 기본 설정으로 4개 스트림 구성을 생성하는 함수
@@ -259,13 +300,28 @@ namespace GStreamerDotNetTest
                     if (string.IsNullOrWhiteSpace(cfg.MultiCastIP)) cfg.MultiCastIP = null;
                 }
 
+                //if (s.MultiCastInterface != null)
+                //{
+                //    var selectedInterface = s.MultiCastInterface.SelectedItem as string;
+                //    if (string.IsNullOrWhiteSpace(selectedInterface)) selectedInterface = null;
+                //    cfg.MultiCastInterface = selectedInterface;
+                //}01
                 if (s.MultiCastInterface != null)
                 {
-                    var selectedInterface = s.MultiCastInterface.SelectedItem as string;
-                    if (string.IsNullOrWhiteSpace(selectedInterface)) selectedInterface = null;
-                    cfg.MultiCastInterface = selectedInterface;
-                }
+                    var selectedInterfaceName = s.MultiCastInterface.SelectedItem as string; // "이더넷 2"
+                    string ipAddress = GetIpAddressFromInterfaceName(selectedInterfaceName);  // "192.168.10.15"
 
+                    if (string.IsNullOrWhiteSpace(ipAddress))
+                    {
+                        cfg.MultiCastInterface = null;
+                        Debug.WriteLine($"경고: 인터페이스 '{selectedInterfaceName}'에서 IPv4 주소를 찾지 못했습니다.");
+                    }
+                    else
+                    {
+                        // C++ 래퍼로 IP 주소를 전달합니다.
+                        cfg.MultiCastInterface = ipAddress;
+                    }
+                }
                 list.Add(cfg);
             }
 
