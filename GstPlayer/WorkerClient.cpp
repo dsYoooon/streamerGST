@@ -1,14 +1,32 @@
 #include "WorkerClient.h"
 
-#include <filesystem>
 #include <memory>
 #include <sstream>
 #include <string_view>
+#include <functional>
+#include <vector>
 
 namespace {
 
 constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\GStreamerWorker";
 constexpr char kProtocolVersion[] = "1.0";
+
+struct CriticalSectionGuard {
+    explicit CriticalSectionGuard(CRITICAL_SECTION* section) : section_(section) {}
+    ~CriticalSectionGuard() {
+        if (section_) {
+            LeaveCriticalSection(section_);
+        }
+    }
+
+private:
+    CRITICAL_SECTION* section_;
+};
+
+bool FileExists(const std::wstring& path) {
+    DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
 
 bool WriteMessage(HANDLE pipe, const nlohmann::json& message, std::string& error) {
     std::string payload = message.dump();
@@ -41,7 +59,7 @@ bool ReadMessage(HANDLE pipe, nlohmann::json& message, std::string& error) {
     DWORD total_read = 0;
     while (total_read < length) {
         DWORD bytes_read = 0;
-        if (!ReadFile(pipe, buffer.data() + total_read, length - total_read, &bytes_read, nullptr)) {
+        if (!ReadFile(pipe, buffer.empty() ? nullptr : &buffer[0] + total_read, length - total_read, &bytes_read, nullptr)) {
             error = "Failed to read payload from pipe";
             return false;
         }
@@ -65,7 +83,7 @@ std::wstring Utf8ToWide(const std::string& text) {
     }
     int size_needed = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0);
     std::wstring result(size_needed, 0);
-    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), result.data(), size_needed);
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), result.empty() ? nullptr : &result[0], size_needed);
     return result;
 }
 
@@ -75,7 +93,7 @@ std::string WideToUtf8(const std::wstring& text) {
     }
     int size_needed = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
     std::string result(size_needed, 0);
-    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), result.data(), size_needed, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), result.empty() ? nullptr : &result[0], size_needed, nullptr, nullptr);
     return result;
 }
 
@@ -106,14 +124,20 @@ bool WorkerClient::IsProcessAlive() const {
 std::wstring WorkerClient::ResolveWorkerPath() const {
     wchar_t module_path[MAX_PATH] = { 0 };
     GetModuleFileNameW(nullptr, module_path, MAX_PATH);
-    std::filesystem::path base = std::filesystem::path(module_path).parent_path();
-    std::filesystem::path candidate = base / L"GStreamerWorker.exe";
-    if (std::filesystem::exists(candidate)) {
-        return candidate.wstring();
+    std::wstring base(module_path);
+    auto pos = base.find_last_of(L"\\/");
+    if (pos != std::wstring::npos) {
+        base = base.substr(0, pos);
     }
-    candidate = base / L".." / L"GStreamerWorker" / L"GStreamerWorker.exe";
-    if (std::filesystem::exists(candidate)) {
-        return candidate.lexically_normal().wstring();
+
+    std::wstring candidate = base + L"\\GStreamerWorker.exe";
+    if (FileExists(candidate)) {
+        return candidate;
+    }
+
+    candidate = base + L"\\..\\GStreamerWorker\\GStreamerWorker.exe";
+    if (FileExists(candidate)) {
+        return candidate;
     }
     return L"GStreamerWorker.exe";
 }
@@ -139,7 +163,8 @@ bool WorkerClient::EnsureWorkerProcess(std::string& error) {
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
 
-    std::wstring cmd_line = worker_path;
+    std::vector<wchar_t> cmd_line(worker_path.begin(), worker_path.end());
+    cmd_line.push_back(L'\0');
 
     if (!CreateProcessW(worker_path.c_str(), cmd_line.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
         error = "Failed to spawn worker process";
@@ -194,7 +219,7 @@ bool WorkerClient::SendRequest(const nlohmann::json& request,
 
 bool WorkerClient::Ping(std::string& error) {
     EnterCriticalSection(&lock_);
-    auto exit = std::unique_ptr<void, void(*)(void*)>(nullptr, [&](void*) { LeaveCriticalSection(&lock_); });
+    CriticalSectionGuard exit(&lock_);
 
     if (!EnsureWorkerProcess(error)) {
         return false;
@@ -220,7 +245,7 @@ bool WorkerClient::StartServer(const std::string& server_ip,
                                const std::vector<StreamConfigNative>& configs,
                                std::string& error) {
     EnterCriticalSection(&lock_);
-    auto exit = std::unique_ptr<void, void(*)(void*)>(nullptr, [&](void*) { LeaveCriticalSection(&lock_); });
+    CriticalSectionGuard exit(&lock_);
 
     if (!EnsureWorkerProcess(error)) {
         return false;
@@ -281,7 +306,7 @@ bool WorkerClient::StartServer(const std::string& server_ip,
 
 bool WorkerClient::StopServer(std::string& error) {
     EnterCriticalSection(&lock_);
-    auto exit = std::unique_ptr<void, void(*)(void*)>(nullptr, [&](void*) { LeaveCriticalSection(&lock_); });
+    CriticalSectionGuard exit(&lock_);
 
     if (!IsProcessAlive()) {
         return true;
@@ -305,7 +330,7 @@ bool WorkerClient::StopServer(std::string& error) {
 
 void WorkerClient::Shutdown() {
     EnterCriticalSection(&lock_);
-    auto exit = std::unique_ptr<void, void(*)(void*)>(nullptr, [&](void*) { LeaveCriticalSection(&lock_); });
+    CriticalSectionGuard exit(&lock_);
 
     if (pipe_handle_ != INVALID_HANDLE_VALUE && pipe_handle_ != nullptr) {
         nlohmann::json request;

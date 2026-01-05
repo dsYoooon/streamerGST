@@ -421,7 +421,7 @@ namespace GStreamerWrapper
         std::string error;
         if (!g_worker_client.StartServer(serverIpUtf8, nativeConfigs, error))
         {
-            Debug::WriteLine("start_server failed: " + gcnew String(error.c_str()));
+            System::Diagnostics::Debug::WriteLine("start_server failed: " + gcnew String(error.c_str()));
         }
     }
 
@@ -445,7 +445,7 @@ namespace GStreamerWrapper
         std::string stopError;
         if (!g_worker_client.StopServer(stopError) && !stopError.empty())
         {
-            Debug::WriteLine("stop_server failed: " + gcnew String(stopError.c_str()));
+            System::Diagnostics::Debug::WriteLine("stop_server failed: " + gcnew String(stopError.c_str()));
         }
     }
 
