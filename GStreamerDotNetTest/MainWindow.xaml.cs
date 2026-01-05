@@ -2,16 +2,16 @@
 using System.Collections.Generic;
 using System.Windows;
 using System.Diagnostics;
+using System.IO;
 using System.Text.RegularExpressions;
 using System.Windows.Controls;
 using System.Net.NetworkInformation;
-using GStreamerWrapper; // C++/CLI 래퍼 네임스페이스
 
 namespace GStreamerDotNetTest
 {
     public partial class MainWindow : Window
     {
-        private GstPlayer _player;
+        private GstProcessManager _gstProcessManager;
         private GstVideoHost _videoHost;
         private StreamConfig[] _configs = new StreamConfig[0];
         private string[] _audioDevices = new string[0];
@@ -88,24 +88,15 @@ namespace GStreamerDotNetTest
         const int defaultStreamCount = 2;
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            try
-            {
-                GstPlayer.Initialize();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    "GStreamer 초기화 실패: " + ex.Message + "\n\nGStreamer 런타임과 PATH를 확인하세요.",
-                    "오류", MessageBoxButton.OK, MessageBoxImage.Error);
-                Application.Current.Shutdown();
-                return;
-            }
-
             _videoHost = new GstVideoHost();
             videoContainer.Child = _videoHost;
-            _player = new GstPlayer(_videoHost.Handle);
-            // ★ MTA 백그라운드에서 디바이스 열거
-            _audioDevices = await System.Threading.Tasks.Task.Run(() => GstPlayer.GetAudioDevices());
+
+            string exePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "GstServer.exe");
+            _gstProcessManager = new GstProcessManager(exePath);
+            _gstProcessManager.OutputReceived += msg => Debug.WriteLine($"[GstServer] {msg}");
+            _gstProcessManager.Start();
+
+            _audioDevices = await System.Threading.Tasks.Task.Run(() => new string[0]);
             _networkInterfaceNames = await System.Threading.Tasks.Task.Run(GetNetworkInterfaceNames);
 
             int monitorCount = DisplayHelper.GetMonitorCount();
@@ -215,8 +206,7 @@ namespace GStreamerDotNetTest
             
             // =================================================================
 
-            if (_player != null)
-                _player.StartScreenCaptureServer(serverIp, _configs);
+            _gstProcessManager?.SendStartServer(serverIp, _configs);
         }
         private void btnPlay_Click(object sender, RoutedEventArgs e)
         {
@@ -330,13 +320,12 @@ namespace GStreamerDotNetTest
 
         private void btnStop_Click(object sender, RoutedEventArgs e)
         {
-            if (_player != null) _player.Stop();
+            _gstProcessManager?.SendStopServer();
         }
 
         private void MainWindow_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            if (_player != null) _player.Stop();
-            GstPlayer.Deinitialize();
+            _gstProcessManager?.Dispose();
         }
 
         private void btnMonitorPlay_Click(object sender, RoutedEventArgs e)
@@ -373,7 +362,7 @@ namespace GStreamerDotNetTest
                     BitrateControl = "CBR",
                     Profile = "high",
                 };
-                if (_player != null) _player.StartScreenCapture(cfg);
+                _gstProcessManager?.SendStartPreview(_videoHost.Handle, monitorIndex);
             }
         }
 

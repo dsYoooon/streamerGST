@@ -1,74 +1,47 @@
 #pragma once
 
-#include <gst/gst.h>
-#include <gst/video/videooverlay.h>
-#include <vcclr.h>
+#include <string>
+#include <vector>
 #include <Windows.h>
 
 namespace GStreamerWrapper
 {
-
-    using namespace System;
-    using namespace System::Runtime::InteropServices; // for GCHandle
-
-    public value struct StreamConfig
+    struct StreamConfigNative
     {
-        int MonitorIndex;
-        int CropX;
-        int CropY;
-        int CropW;
-        int CropH;
-        int Width;
-        int Height;
-        int Framerate;
-        int BitrateKbps;
-        int KeyframeInterval;
-        int Port;
-        int StreamIndex;
-        bool EnableAudio;
-        String ^AudioDevice;
-        bool EnableHardwareAccel;
-        bool EnableOsd;
-        bool EnableMultiCast;
-        String ^BitrateControl;
-        String ^Profile;
-        String ^OsdText;
-        String ^MultiCastIP;
-        String ^MultiCastInterface;
+        int monitor_index{};
+        int crop_x{};
+        int crop_y{};
+        int crop_w{};
+        int crop_h{};
+        int width{};
+        int height{};
+        int framerate{};
+        int bitrate_kbps{};
+        int keyframe_interval{};
+        int port{};
+        int streamIndex{};
+        bool enable_audio{};
+        bool enable_multicast{};
+        std::string audio_device;
+        bool enable_hw_accel{};
+        bool enable_osd{};
+        std::string bitrate_control;
+        std::string profile;
+        std::string overlay_text;
+        std::string multicast_ip;
+        std::string multicast_iface;
     };
 
-    public ref class GstPlayer
-    {
-    private:
-        GstElement *pipeline;
-        GCHandle gcHandle;
+    void Initialize();
+    void Deinitialize();
 
-        static void BusMessageCallback(GstBus *bus, GstMessage *msg, gpointer data);
-        void HandleBusMessage(GstMessage *msg);
+    bool StartPreview(const StreamConfigNative& config, HWND window);
+    void StopPreview();
 
-    public:
-        HWND videoHwnd;
-        GstPlayer(IntPtr windowHandle);
-        ~GstPlayer();
-        !GstPlayer();
+    void RunScreenCaptureRtspServer(const char* serverIp,
+        const StreamConfigNative* configs,
+        int count);
 
-        void StartScreenCapture(StreamConfig config);
-        void StartScreenCaptureServer(String ^serverIp, array<StreamConfig> ^configs);
-        void Stop();
-        void StopPreview();
-        static void Initialize();
-        static void Deinitialize();
-
-        // 기존 API 유지: Capture(마이크) 장치 이름 목록
-        static array<String ^> ^GetAudioDevices();
-
-        // 추가: Render(출력) 장치 이름 목록 (loopback/UI용)
-        static array<String ^> ^GetRenderDevices();
-
-        // 추가: Render/Capture ACTIVE 존재 여부 (오디오 체인 생성 여부 판단용)
-        static bool HasActiveAudioEndpoint(bool wantRender);
-
-        // (선택) 위험한 GstDeviceMonitor 폴백을 켤지 여부 (기본 false 권장)
-        static void SetUseGstDeviceMonitorFallback(bool enable);
-    };
+    void StopScreenCaptureRtspServer();
 }
+
