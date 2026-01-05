@@ -38,6 +38,9 @@ namespace GStreamerWrapper
     bool StartPreview(const StreamConfigNative& config, HWND window);
     void StopPreview();
 
+    // 현재 미리보기 윈도우에 대해 render rectangle을 다시 적용
+    bool RefreshPreviewOverlay(HWND window);
+
     void RunScreenCaptureRtspServer(const char* serverIp,
         const StreamConfigNative* configs,
         int count);

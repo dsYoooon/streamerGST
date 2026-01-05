@@ -155,5 +155,25 @@ namespace GStreamerWrapper
     {
         StopPreviewInternal();
     }
+
+    bool RefreshPreviewOverlay(HWND window)
+    {
+        if (!window)
+            window = g_preview_window;
+
+        if (!g_preview_pipeline || !window)
+            return false;
+
+        g_preview_window = window;
+
+        GstElement* sink = gst_bin_get_by_name(GST_BIN(g_preview_pipeline), "sink");
+        if (!sink)
+            return false;
+
+        ApplyOverlayHandle(sink, window);
+        UpdateOverlayGeometry(sink, window);
+        gst_object_unref(sink);
+        return true;
+    }
 }
 

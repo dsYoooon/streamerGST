@@ -48,6 +48,9 @@ namespace GStreamerDotNetTest
         /// <summary>자식 HWND가 파괴된 직후 알림</summary>
         public event EventHandler HwndDestroyed;
 
+        /// <summary>자식 HWND의 크기가 바뀌었을 때 알림 (미리보기 렌더링 영역 보정용)</summary>
+        public event EventHandler HwndResized;
+
         // ===== HwndHost overrides =====
         protected override HandleRef BuildWindowCore(HandleRef hwndParent)
         {
@@ -104,6 +107,7 @@ namespace GStreamerDotNetTest
                 int w = Math.Max(1, (int)Math.Round(rcBoundingBox.Width));
                 int h = Math.Max(1, (int)Math.Round(rcBoundingBox.Height));
                 SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+                HwndResized?.Invoke(this, EventArgs.Empty);
             }
         }
 
@@ -119,6 +123,7 @@ namespace GStreamerDotNetTest
                 int w = Math.Max(1, (int)Math.Round(sizeInfo.NewSize.Width));
                 int h = Math.Max(1, (int)Math.Round(sizeInfo.NewSize.Height));
                 SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+                HwndResized?.Invoke(this, EventArgs.Empty);
             }
         }
     }

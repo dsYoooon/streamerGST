@@ -89,6 +89,7 @@ namespace GStreamerDotNetTest
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             _videoHost = new GstVideoHost();
+            _videoHost.HwndResized += (s, _) => _gstProcessManager?.SendUpdatePreviewRectangle(_videoHost.Handle);
             videoContainer.Child = _videoHost;
 
             string exePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "GstServer.exe");
@@ -342,6 +343,12 @@ namespace GStreamerDotNetTest
             }
 
             int width, height;
+            if (_videoHost.Handle == IntPtr.Zero)
+            {
+                Debug.WriteLine("Preview host handle not created yet. Ignoring preview request.");
+                return;
+            }
+
             if (DisplayHelper.TryGetMonitorSize(monitorIndex, out width, out height))
             {
                 var cfg = new StreamConfig
