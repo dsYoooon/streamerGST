@@ -14,6 +14,9 @@ namespace GStreamerWrapper
         GstBus* g_preview_bus = nullptr;
         HWND g_preview_window = nullptr;
 
+
+        void UpdateOverlayGeometry(GstElement* sink, HWND window);
+
         GstBusSyncReply PreviewBusSyncHandler(GstBus* bus, GstMessage* msg, gpointer user_data)
         {
             HWND window = reinterpret_cast<HWND>(user_data);
@@ -22,6 +25,8 @@ namespace GStreamerWrapper
             {
                 GstVideoOverlay* overlay = GST_VIDEO_OVERLAY(GST_MESSAGE_SRC(msg));
                 gst_video_overlay_set_window_handle(overlay, (guintptr)window);
+                UpdateOverlayGeometry(GST_ELEMENT(overlay), window);
+
                 return GST_BUS_DROP;
             }
 
@@ -56,6 +61,27 @@ namespace GStreamerWrapper
             {
                 gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(sink), (guintptr)window);
             }
+        }
+
+        void UpdateOverlayGeometry(GstElement* sink, HWND window)
+        {
+            if (!sink || !window)
+                return;
+
+            if (!GST_IS_VIDEO_OVERLAY(sink))
+                return;
+
+            RECT rect{};
+            if (!GetClientRect(window, &rect))
+                return;
+
+            int width = rect.right - rect.left;
+            int height = rect.bottom - rect.top;
+            if (width <= 0 || height <= 0)
+                return;
+
+            gst_video_overlay_set_render_rectangle(GST_VIDEO_OVERLAY(sink), 0, 0, width, height);
+            gst_video_overlay_expose(GST_VIDEO_OVERLAY(sink));
         }
     }
 
@@ -120,6 +146,7 @@ namespace GStreamerWrapper
         gst_bus_set_sync_handler(g_preview_bus, PreviewBusSyncHandler, g_preview_window, nullptr);
 
         ApplyOverlayHandle(sink, window);
+        UpdateOverlayGeometry(sink, window);
         gst_element_set_state(pipeline, GST_STATE_PLAYING);
         return true;
     }
