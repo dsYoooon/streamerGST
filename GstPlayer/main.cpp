@@ -36,45 +36,53 @@ namespace
         return result;
     }
 
+    bool ParseStreamConfig(std::istream& iss, StreamConfigNative& cfg)
+    {
+        std::string audio_b64, bitrate_b64, profile_b64, osd_b64, mc_ip_b64, mc_iface_b64;
+
+        // [수정] bool 타입은 직접 읽지 말고 int로 읽어서 변환 (스트림 파싱 안정성)
+        int i_audio = 0, i_multicast = 0, i_hw = 0, i_osd = 0;
+
+        if (!(iss >> cfg.monitor_index >> cfg.crop_x >> cfg.crop_y >> cfg.crop_w >> cfg.crop_h
+            >> cfg.width >> cfg.height >> cfg.framerate >> cfg.bitrate_kbps >> cfg.keyframe_interval
+            >> cfg.port >> cfg.streamIndex
+            >> i_audio          // bool -> int
+            >> i_multicast      // bool -> int
+            >> audio_b64
+            >> i_hw             // bool -> int
+            >> i_osd            // bool -> int
+            >> bitrate_b64 >> profile_b64
+            >> osd_b64 >> mc_ip_b64 >> mc_iface_b64))
+        {
+            return false;
+        }
+
+        // int -> bool 변환
+        cfg.enable_audio = (i_audio != 0);
+        cfg.enable_multicast = (i_multicast != 0);
+        cfg.enable_hw_accel = (i_hw != 0);
+        cfg.enable_osd = (i_osd != 0);
+
+        cfg.audio_device = DecodeBase64(audio_b64);
+        cfg.bitrate_control = DecodeBase64(bitrate_b64);
+        cfg.profile = DecodeBase64(profile_b64);
+        cfg.overlay_text = DecodeBase64(osd_b64);
+        cfg.multicast_ip = DecodeBase64(mc_ip_b64);
+        cfg.multicast_iface = DecodeBase64(mc_iface_b64);
+
+        return true;
+    }
+
     bool ParseStreamConfigs(std::istream& iss, int count, std::vector<StreamConfigNative>& out)
     {
         out.clear();
         for (int i = 0; i < count; ++i)
         {
             StreamConfigNative cfg{};
-            std::string audio_b64, bitrate_b64, profile_b64, osd_b64, mc_ip_b64, mc_iface_b64;
-
-            // [수정] bool 타입은 직접 읽지 말고 int로 읽어서 변환 (스트림 파싱 안정성)
-            int i_audio = 0, i_multicast = 0, i_hw = 0, i_osd = 0;
-
-            if (!(iss >> cfg.monitor_index >> cfg.crop_x >> cfg.crop_y >> cfg.crop_w >> cfg.crop_h
-                >> cfg.width >> cfg.height >> cfg.framerate >> cfg.bitrate_kbps >> cfg.keyframe_interval
-                >> cfg.port >> cfg.streamIndex
-                >> i_audio          // bool -> int
-                >> i_multicast      // bool -> int
-                >> audio_b64
-                >> i_hw             // bool -> int
-                >> i_osd            // bool -> int
-                >> bitrate_b64 >> profile_b64
-                >> osd_b64 >> mc_ip_b64 >> mc_iface_b64))
+            if (!ParseStreamConfig(iss, cfg))
             {
-                // 디버깅을 위해 어디서 실패했는지 출력하고 싶다면:
-                // std::cout << "Parse failed at index " << i << std::endl;
                 return false;
             }
-
-            // int -> bool 변환
-            cfg.enable_audio = (i_audio != 0);
-            cfg.enable_multicast = (i_multicast != 0);
-            cfg.enable_hw_accel = (i_hw != 0);
-            cfg.enable_osd = (i_osd != 0);
-
-            cfg.audio_device = DecodeBase64(audio_b64);
-            cfg.bitrate_control = DecodeBase64(bitrate_b64);
-            cfg.profile = DecodeBase64(profile_b64);
-            cfg.overlay_text = DecodeBase64(osd_b64);
-            cfg.multicast_ip = DecodeBase64(mc_ip_b64);
-            cfg.multicast_iface = DecodeBase64(mc_iface_b64);
 
             out.push_back(cfg);
         }
@@ -168,6 +176,18 @@ int main()
             long long hwnd_val = 0;
             int monitorIdx = 0;
             if (iss >> hwnd_val >> monitorIdx) {
+                // 선택적으로 미리보기 설정을 함께 전달받을 수 있음 (CFG 토큰 이후)
+                std::string token;
+                if (iss >> token && token == "CFG")
+                {
+                    StreamConfigNative cfg{};
+                    if (ParseStreamConfig(iss, cfg))
+                    {
+                        g_last_configs.clear();
+                        g_last_configs.push_back(cfg);
+                    }
+                }
+
                 StartPreviewWithMonitor(reinterpret_cast<HWND>(static_cast<intptr_t>(hwnd_val)), monitorIdx);
                 std::cout << "PREVIEW_STARTED" << std::endl;
             }

@@ -42,6 +42,7 @@ namespace GStreamerDotNetTest
         private string _lastServerIp = string.Empty;
         private IntPtr _lastPreviewHandle = IntPtr.Zero;
         private int _lastPreviewMonitor = 0;
+        private StreamConfig _lastPreviewConfig = null;
         private bool _disposed;
 
         public event Action<string> OutputReceived;
@@ -88,7 +89,7 @@ namespace GStreamerDotNetTest
                 }
                 if (_lastPreviewHandle != IntPtr.Zero)
                 {
-                    SendStartPreview(_lastPreviewHandle, _lastPreviewMonitor);
+                    SendStartPreview(_lastPreviewHandle, _lastPreviewMonitor, _lastPreviewConfig);
                 }
             }
         }
@@ -130,29 +131,8 @@ namespace GStreamerDotNetTest
 
             foreach (var c in _lastConfigs)
             {
-                cmd.AppendFormat(" {0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} {12} {13} {14} {15} {16} {17} {18} {19} {20} {21}",
-                    c.MonitorIndex,
-                    c.CropX,
-                    c.CropY,
-                    c.CropW,
-                    c.CropH,
-                    c.Width,
-                    c.Height,
-                    c.Framerate,
-                    c.BitrateKbps,
-                    c.KeyframeInterval,
-                    c.Port,
-                    c.StreamIndex,
-                    c.EnableAudio ? 1 : 0,
-                    c.EnableMultiCast ? 1 : 0,
-                    Encode(c.AudioDevice),
-                    c.EnableHardwareAccel ? 1 : 0,
-                    c.EnableOsd ? 1 : 0,
-                    Encode(c.BitrateControl),
-                    Encode(c.Profile),
-                    Encode(c.OsdText),
-                    Encode(c.MultiCastIP),
-                    Encode(c.MultiCastInterface));
+                cmd.Append(' ');
+                AppendConfig(cmd, c);
             }
 
             SendCommand(cmd.ToString());
@@ -163,11 +143,22 @@ namespace GStreamerDotNetTest
             SendCommand("CMD_STOP_SERVER");
         }
 
-        public void SendStartPreview(IntPtr hwnd, int monitorIndex)
+        public void SendStartPreview(IntPtr hwnd, int monitorIndex, StreamConfig previewConfig = null)
         {
             _lastPreviewHandle = hwnd;
             _lastPreviewMonitor = monitorIndex;
-            SendCommand($"CMD_START_PREVIEW {hwnd.ToInt64()} {monitorIndex}");
+            _lastPreviewConfig = previewConfig;
+
+            var cmd = new StringBuilder();
+            cmd.AppendFormat("CMD_START_PREVIEW {0} {1}", hwnd.ToInt64(), monitorIndex);
+
+            if (previewConfig != null)
+            {
+                cmd.Append(" CFG ");
+                AppendConfig(cmd, previewConfig);
+            }
+
+            SendCommand(cmd.ToString());
         }
 
         public void SendStopPreview()
@@ -200,6 +191,33 @@ namespace GStreamerDotNetTest
             // [수정] 빈 값일 경우 Base64 변환 시 ""가 되므로, 공백 파싱이 밀리는 문제 해결을 위해 명시적 토큰 사용
             if (string.IsNullOrEmpty(value)) return "__EMPTY__";
             return Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+        }
+
+        private static void AppendConfig(StringBuilder cmd, StreamConfig c)
+        {
+            cmd.AppendFormat("{0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} {12} {13} {14} {15} {16} {17} {18} {19} {20} {21}",
+                c.MonitorIndex,
+                c.CropX,
+                c.CropY,
+                c.CropW,
+                c.CropH,
+                c.Width,
+                c.Height,
+                c.Framerate,
+                c.BitrateKbps,
+                c.KeyframeInterval,
+                c.Port,
+                c.StreamIndex,
+                c.EnableAudio ? 1 : 0,
+                c.EnableMultiCast ? 1 : 0,
+                Encode(c.AudioDevice),
+                c.EnableHardwareAccel ? 1 : 0,
+                c.EnableOsd ? 1 : 0,
+                Encode(c.BitrateControl),
+                Encode(c.Profile),
+                Encode(c.OsdText),
+                Encode(c.MultiCastIP),
+                Encode(c.MultiCastInterface));
         }
 
         public void Dispose()

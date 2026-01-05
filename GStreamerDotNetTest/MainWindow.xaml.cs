@@ -362,7 +362,7 @@ namespace GStreamerDotNetTest
                     BitrateControl = "CBR",
                     Profile = "high",
                 };
-                _gstProcessManager?.SendStartPreview(_videoHost.Handle, monitorIndex);
+                _gstProcessManager?.SendStartPreview(_videoHost.Handle, monitorIndex, cfg);
             }
         }
 
