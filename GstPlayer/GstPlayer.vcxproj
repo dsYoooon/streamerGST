@@ -45,10 +45,12 @@
   <ItemGroup>
     <ClInclude Include="GStreamerWrapper.h" />
     <ClInclude Include="ScreenCaptureServer.h" />
+    <ClInclude Include="WorkerClient.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="GStreamerWrapper.cpp" />
     <ClCompile Include="ScreenCaptureServer.cpp" />
+    <ClCompile Include="WorkerClient.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
