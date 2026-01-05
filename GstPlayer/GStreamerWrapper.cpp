@@ -12,6 +12,21 @@ namespace GStreamerWrapper
     {
         GstElement* g_preview_pipeline = nullptr;
         GstBus* g_preview_bus = nullptr;
+        HWND g_preview_window = nullptr;
+
+        GstBusSyncReply PreviewBusSyncHandler(GstBus* bus, GstMessage* msg, gpointer user_data)
+        {
+            HWND window = reinterpret_cast<HWND>(user_data);
+
+            if (window && gst_is_video_overlay_prepare_window_handle_message(msg))
+            {
+                GstVideoOverlay* overlay = GST_VIDEO_OVERLAY(GST_MESSAGE_SRC(msg));
+                gst_video_overlay_set_window_handle(overlay, (guintptr)window);
+                return GST_BUS_DROP;
+            }
+
+            return GST_BUS_PASS;
+        }
 
         void StopPreviewInternal()
         {
@@ -24,9 +39,12 @@ namespace GStreamerWrapper
 
             if (g_preview_bus)
             {
+                gst_bus_set_sync_handler(g_preview_bus, nullptr, nullptr, nullptr);
                 gst_object_unref(g_preview_bus);
                 g_preview_bus = nullptr;
             }
+
+            g_preview_window = nullptr;
         }
 
         void ApplyOverlayHandle(GstElement* sink, HWND window)
@@ -60,6 +78,8 @@ namespace GStreamerWrapper
     bool StartPreview(const StreamConfigNative& config, HWND window)
     {
         StopPreviewInternal();
+
+        g_preview_window = window;
 
         GstElement* pipeline = gst_pipeline_new("screen-preview");
         GstElement* src = gst_element_factory_make("d3d11screencapturesrc", "src");
@@ -97,6 +117,7 @@ namespace GStreamerWrapper
 
         g_preview_pipeline = pipeline;
         g_preview_bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
+        gst_bus_set_sync_handler(g_preview_bus, PreviewBusSyncHandler, g_preview_window, nullptr);
 
         ApplyOverlayHandle(sink, window);
         gst_element_set_state(pipeline, GST_STATE_PLAYING);
