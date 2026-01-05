@@ -14,7 +14,17 @@ namespace GStreamerDotNetTest
     /// </summary>
     public partial class App : Application
     {
-        
+        protected override void OnStartup(StartupEventArgs e)
+        {
+            // 파이프라인을 별도 프로세스에서 실행하도록 요청된 경우 UI를 건너뜁니다.
+            if (PipelineWorkerMode.TryRun(e.Args))
+            {
+                Shutdown();
+                return;
+            }
+
+            base.OnStartup(e);
+        }
 
     }
 }

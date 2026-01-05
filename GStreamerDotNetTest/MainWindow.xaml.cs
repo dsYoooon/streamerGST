@@ -16,6 +16,7 @@ namespace GStreamerDotNetTest
         private StreamConfig[] _configs = new StreamConfig[0];
         private string[] _audioDevices = new string[0];
         private string[] _networkInterfaceNames = new string[0];
+        private readonly PipelineWorkerLauncher _pipelineLauncher = new PipelineWorkerLauncher();
 
         // --- StreamSetting 클래스는 UI 요소를 보관합니다. ---
         private class StreamSetting
@@ -212,11 +213,10 @@ namespace GStreamerDotNetTest
             // ★ 수정된 부분 2: UI 설정 대신 기본 설정 값 사용
             // =================================================================
             if (isFirst) _configs = CreateDefaultStreamConfigs(defaultStreamCount);
-            
+
             // =================================================================
 
-            if (_player != null)
-                _player.StartScreenCaptureServer(serverIp, _configs);
+            _pipelineLauncher.Start(serverIp, _configs);
         }
         private void btnPlay_Click(object sender, RoutedEventArgs e)
         {
@@ -330,11 +330,12 @@ namespace GStreamerDotNetTest
 
         private void btnStop_Click(object sender, RoutedEventArgs e)
         {
-            if (_player != null) _player.Stop();
+            _pipelineLauncher.Stop();
         }
 
         private void MainWindow_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
+            _pipelineLauncher.Stop();
             if (_player != null) _player.Stop();
             GstPlayer.Deinitialize();
         }
