@@ -27,6 +27,7 @@ namespace GStreamerWrapper
     using namespace System::Diagnostics;             // Debug 클래스를 위해 추가
     using namespace System::Collections::Generic;
     using namespace System::Text;
+    using namespace System::IO;
 
     // 기본값: 폴백 OFF (GstDeviceMonitor는 플러그인/드라이버 AV 가능성)
     static bool g_useGstDeviceMonitorFallback = false;
@@ -243,6 +244,61 @@ namespace GStreamerWrapper
         g_useGstDeviceMonitorFallback = enable;
     }
 
+    void GstPlayer::StopWorker()
+    {
+        try
+        {
+            if (workerProcess != nullptr && !workerProcess->HasExited)
+            {
+                workerProcess->Kill();
+                workerProcess->WaitForExit(2000);
+            }
+        }
+        catch (Exception ^ex)
+        {
+            Debug::WriteLine("[GstWorker] failed to stop: " + ex->Message);
+        }
+
+        workerProcess = nullptr;
+
+        try
+        {
+            if (!String::IsNullOrEmpty(workerConfigPath) && File::Exists(workerConfigPath))
+            {
+                File::Delete(workerConfigPath);
+            }
+        }
+        catch (Exception ^ex)
+        {
+            Debug::WriteLine("[GstWorker] failed to cleanup config: " + ex->Message);
+        }
+
+        workerConfigPath = nullptr;
+    }
+
+    void GstPlayer::LaunchWorkerWithConfig(String ^configContent)
+    {
+        StopWorker();
+
+        workerConfigPath = Path::Combine(Path::GetTempPath(),
+            String::Format("gstworker_{0}.cfg", Guid::NewGuid().ToString("N")));
+        File::WriteAllText(workerConfigPath, configContent, Encoding::UTF8);
+
+        String ^exePath = Path::Combine(AppDomain::CurrentDomain->BaseDirectory, "GstWorker.exe");
+        if (!File::Exists(exePath))
+        {
+            throw gcnew FileNotFoundException("GstWorker.exe not found", exePath);
+        }
+
+        ProcessStartInfo ^psi = gcnew ProcessStartInfo();
+        psi->FileName = exePath;
+        psi->Arguments = String::Format("--config \"{0}\"", workerConfigPath);
+        psi->UseShellExecute = false;
+        psi->CreateNoWindow = true;
+
+        workerProcess = Process::Start(psi);
+    }
+
     void GstPlayer::Initialize()
     {
         gst_init(nullptr, nullptr);
@@ -273,6 +329,7 @@ namespace GStreamerWrapper
 
     void GstPlayer::Deinitialize()
     {
+        StopWorker();
         StopScreenCaptureRtspServer();
         gst_deinit();
     }
@@ -330,98 +387,66 @@ namespace GStreamerWrapper
     {
         Stop();
 
-        pipeline = gst_pipeline_new("screen-preview");
-        GstElement *src = gst_element_factory_make("d3d11screencapturesrc", "src");
-        GstElement *queue = gst_element_factory_make("queue", "que");
-        GstElement *conv = gst_element_factory_make("d3d11convert", "conv");
-        GstElement *capsfilter = gst_element_factory_make("capsfilter", "caps");
-        GstElement *sink = gst_element_factory_make("d3d11videosink", "sink");
-
-        if (!pipeline || !src || !queue || !conv || !capsfilter || !sink)
+        StringBuilder ^sb = gcnew StringBuilder();
+        sb->AppendLine("mode=preview");
+        sb->AppendLine("[preview]");
+        sb->AppendLine(String::Format("monitor={0}", config.MonitorIndex));
+        if (config.Width > 0 && config.Height > 0)
         {
-            g_printerr("파이프라인 생성 실패\n");
-            if (pipeline)
-            {
-                gst_object_unref(pipeline); pipeline = nullptr;
-            }
-            return;
+            sb->AppendLine(String::Format("width={0}", config.Width));
+            sb->AppendLine(String::Format("height={0}", config.Height));
         }
+        sb->AppendLine(String::Format("framerate={0}", config.Framerate > 0 ? config.Framerate : 30));
+        sb->AppendLine(String::Format("window={0}", (Int64)videoHwnd));
 
-        g_object_set(src,
-            "monitor-index", config.MonitorIndex,
-            "show-cursor", TRUE,
-
-            "capture-api", 1,
-            NULL);
-        g_object_set(sink, "force-aspect-ratio", false, NULL);
-        std::ostringstream caps_str;
-        caps_str << "video/x-raw(memory:D3D11Memory),format=NV12,framerate=30/1";
-        GstCaps *caps = gst_caps_from_string(caps_str.str().c_str());
-        g_object_set(capsfilter, "caps", caps, NULL);
-        gst_caps_unref(caps);
-        //gst_debug_set_default_threshold(GST_LEVEL_INFO);
-        gst_bin_add_many(GST_BIN(pipeline), src, queue, conv, capsfilter, sink, NULL);
-        if (!gst_element_link_many(src, queue, conv, capsfilter, sink, NULL))
-        {
-            gst_debug_set_default_threshold(GST_LEVEL_ERROR);
-            g_printerr("요소 연결 실패\n");
-            gst_object_unref(pipeline);
-            pipeline = nullptr;
-            return;
-        }
-
-        gcHandle = GCHandle::Alloc(this);
-        GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
-        gst_bus_add_signal_watch(bus);
-        g_signal_connect(bus, "message", G_CALLBACK(BusMessageCallback), GCHandle::ToIntPtr(gcHandle).ToPointer());
-        gst_bus_set_sync_handler(bus, BusSyncHandler, GCHandle::ToIntPtr(gcHandle).ToPointer(), NULL);
-        g_object_unref(bus);
-
-        gst_element_set_state(pipeline, GST_STATE_PLAYING);
+        LaunchWorkerWithConfig(sb->ToString());
     }
 
     void GstPlayer::StartScreenCaptureServer(String ^serverIp, array<StreamConfig> ^configs)
     {
-        //Stop();
+        StopWorker();
 
-        std::string serverIpUtf8 = ToUtf8String(serverIp);
-
-        std::vector<StreamConfigNative> nativeConfigs;
-        for each (StreamConfig cfg in configs)
+        StringBuilder ^sb = gcnew StringBuilder();
+        sb->AppendLine("mode=server");
+        if (!String::IsNullOrEmpty(serverIp))
         {
-            StreamConfigNative ncfg;
-            ncfg.monitor_index = cfg.MonitorIndex;
-            ncfg.crop_x = cfg.CropX;
-            ncfg.crop_y = cfg.CropY;
-            ncfg.crop_w = cfg.CropW;
-            ncfg.crop_h = cfg.CropH;
-            ncfg.width = cfg.Width;
-            ncfg.height = cfg.Height;
-            ncfg.framerate = cfg.Framerate;
-            ncfg.port = cfg.Port;
-            ncfg.bitrate_kbps = cfg.BitrateKbps;
-            ncfg.keyframe_interval = cfg.KeyframeInterval;
-            ncfg.enable_audio = cfg.EnableAudio;
-            ncfg.enable_multicast = cfg.EnableMultiCast;
-            ncfg.streamIndex = cfg.StreamIndex;
-            ncfg.audio_device = ToUtf8String(cfg.AudioDevice);
-            ncfg.enable_hw_accel = cfg.EnableHardwareAccel;
-            ncfg.enable_osd = cfg.EnableOsd;
-            ncfg.profile = ToUtf8String(cfg.Profile);
-            ncfg.bitrate_control = ToUtf8String(cfg.BitrateControl);
-            ncfg.overlay_text = ToUtf8String(cfg.OsdText);
-            ncfg.multicast_ip = ToUtf8String(cfg.MultiCastIP);
-            ncfg.multicast_iface = ToUtf8String(cfg.MultiCastInterface);
-            nativeConfigs.push_back(ncfg);
+            sb->AppendLine(String::Format("server_ip={0}", serverIp));
         }
 
-        RunScreenCaptureRtspServer(serverIpUtf8.empty() ? nullptr : serverIpUtf8.c_str(),
-            nativeConfigs.data(),
-            (int)nativeConfigs.size());
+        int idx = 0;
+        for each (StreamConfig cfg in configs)
+        {
+            sb->AppendLine(String::Format("[stream{0}]", idx++));
+            sb->AppendLine(String::Format("monitor={0}", cfg.MonitorIndex));
+            sb->AppendLine(String::Format("crop_x={0}", cfg.CropX));
+            sb->AppendLine(String::Format("crop_y={0}", cfg.CropY));
+            sb->AppendLine(String::Format("crop_w={0}", cfg.CropW));
+            sb->AppendLine(String::Format("crop_h={0}", cfg.CropH));
+            sb->AppendLine(String::Format("width={0}", cfg.Width));
+            sb->AppendLine(String::Format("height={0}", cfg.Height));
+            sb->AppendLine(String::Format("framerate={0}", cfg.Framerate));
+            sb->AppendLine(String::Format("bitrate={0}", cfg.BitrateKbps));
+            sb->AppendLine(String::Format("keyint={0}", cfg.KeyframeInterval));
+            sb->AppendLine(String::Format("port={0}", cfg.Port));
+            sb->AppendLine(String::Format("stream_index={0}", cfg.StreamIndex));
+            sb->AppendLine(String::Format("enable_audio={0}", cfg.EnableAudio ? "1" : "0"));
+            sb->AppendLine(String::Format("enable_multicast={0}", cfg.EnableMultiCast ? "1" : "0"));
+            if (!String::IsNullOrEmpty(cfg.AudioDevice)) sb->AppendLine(String::Format("audio_device={0}", cfg.AudioDevice));
+            sb->AppendLine(String::Format("enable_hw_accel={0}", cfg.EnableHardwareAccel ? "1" : "0"));
+            sb->AppendLine(String::Format("enable_osd={0}", cfg.EnableOsd ? "1" : "0"));
+            if (!String::IsNullOrEmpty(cfg.BitrateControl)) sb->AppendLine(String::Format("bitrate_control={0}", cfg.BitrateControl));
+            if (!String::IsNullOrEmpty(cfg.Profile)) sb->AppendLine(String::Format("profile={0}", cfg.Profile));
+            if (!String::IsNullOrEmpty(cfg.OsdText)) sb->AppendLine(String::Format("overlay_text={0}", cfg.OsdText));
+            if (!String::IsNullOrEmpty(cfg.MultiCastIP)) sb->AppendLine(String::Format("multicast_ip={0}", cfg.MultiCastIP));
+            if (!String::IsNullOrEmpty(cfg.MultiCastInterface)) sb->AppendLine(String::Format("multicast_iface={0}", cfg.MultiCastInterface));
+        }
+
+        LaunchWorkerWithConfig(sb->ToString());
     }
 
     void GstPlayer::Stop()
     {
+        StopWorker();
         gst_print("GstPlayer::Stop called\n");
         if (pipeline)
         {
@@ -442,6 +467,7 @@ namespace GStreamerWrapper
 
     void GstPlayer::StopPreview()
     {
+        StopWorker();
         if (pipeline)
         {
             gst_element_set_state(pipeline, GST_STATE_NULL);
