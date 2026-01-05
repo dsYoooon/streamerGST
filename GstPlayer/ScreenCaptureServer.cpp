@@ -292,7 +292,7 @@ namespace GStreamerWrapper {
     static void client_closed_callback(GstRTSPClient* client, gpointer) {
         GstRTSPConnection* c = gst_rtsp_client_get_connection(client);
         const gchar* ip = c ? gst_rtsp_connection_get_ip(c) : "unknown";
-        g_print("<<< 클라이언트 종료: %s\n", ip ? ip : "unknown");
+        g_print("<<< close client: %s\n", ip ? ip : "unknown");
     }
     static void client_connected_callback(GstRTSPServer *, GstRTSPClient *client, gpointer user_data)
     {
@@ -308,12 +308,12 @@ namespace GStreamerWrapper {
             gst_rtsp_client_close(client);
             return;
         }
-
+        gst_debug_set_default_threshold(GST_LEVEL_INFO);
         GstRTSPConnection *c = gst_rtsp_client_get_connection(client);
         if (c)
         {
             const gchar *ip = gst_rtsp_connection_get_ip(c);
-            g_print(">>> 새로운 클라이언트: %s\n", ip ? ip : "unknown");
+            g_print(">>> new client: %s\n", ip ? ip : "unknown");
         }
 
         g_signal_connect(client, "closed", G_CALLBACK(client_closed_callback), user_data);
@@ -1591,7 +1591,7 @@ namespace GStreamerWrapper {
 
         // [추가] 300ms 뒤 게이트 오픈 (200~500ms 중간값 추천)
         g_timeout_add(500, enable_accept_gate_cb, ctx);
-
+		int cnt = 0;
         // 모든 서버를 공유 GLib 컨텍스트에 attach
         for (auto& se : ctx->servers) {
             se.source_id = gst_rtsp_server_attach(se.server, ctx->main_ctx);
@@ -1600,8 +1600,8 @@ namespace GStreamerWrapper {
                 return false;
             }
 
-            g_print("RTSP 서버가 시작되었습니다. 예: rtsp://%s:%d/screen1\n",
-                g_server_ip.c_str(), se.service_port);
+            g_print("RTSP serverstart: rtsp://%s:%d/screen%d\n",
+                g_server_ip.c_str(), se.service_port, cnt++);
         }
 
         for (auto& mc : ctx->multicast_streams) {

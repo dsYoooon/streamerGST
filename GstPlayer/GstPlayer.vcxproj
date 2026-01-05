@@ -97,7 +97,7 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
     <CLRSupport>true</CLRSupport>
@@ -171,6 +171,7 @@
     <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);$(GSTREAMER_1_0_ROOT_MSVC_X86_64)include\glib-2.0;$(GSTREAMER_1_0_ROOT_MSVC_X86_64)include\gstreamer-1.0;$(GSTREAMER_1_0_ROOT_MSVC_X86_64)lib\glib-2.0\include</IncludePath>
     <LibraryPath>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(GSTREAMER_1_0_ROOT_MSVC_X86_64)lib</LibraryPath>
     <OutDir>..\x64\debug\</OutDir>
+    <TargetName>GstServer</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='re201|x64'">
     <IncludePath>$(VC_IncludePath);$(WindowsSDK_IncludePath);C:\Program Files\gstreamer\1.0\msvc_x86_64\include\glib-2.0;C:\Program Files\gstreamer\1.0\msvc_x86_64\include\gstreamer-1.0;C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\glib-2.0\include</IncludePath>
@@ -197,7 +198,9 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions);_SERVPROV_H_</PreprocessorDefinitions>
-      <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard>Default</LanguageStandard>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <CompileAsManaged>true</CompileAsManaged>
     </ClCompile>
     <Link>
       <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);gstreamer-1.0.lib;gstbase-1.0.lib;gstvideo-1.0.lib;gobject-2.0.lib;glib-2.0.lib;Shcore.lib;gstpbutils-1.0.lib;gstapp-1.0.lib;gstrtspserver-1.0.lib;gstrtsp-1.0.lib</AdditionalDependencies>

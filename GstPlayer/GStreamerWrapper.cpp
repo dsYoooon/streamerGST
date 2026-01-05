@@ -1,4 +1,4 @@
-#include "GStreamerWrapper.h"
+﻿#include "GStreamerWrapper.h"
 #include "ScreenCaptureServer.h"
 
 #include <gst/gst.h>

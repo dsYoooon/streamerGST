@@ -67,6 +67,8 @@ namespace GStreamerDotNetTest
                     RedirectStandardOutput = true,
                     UseShellExecute = false,
                     CreateNoWindow = true,
+                    // [추가] 서브프로세스의 출력을 UTF-8로 읽도록 설정
+                    //StandardOutputEncoding = Encoding.Default
                 };
 
                 _process = new Process { StartInfo = psi, EnableRaisingEvents = true };
@@ -191,9 +193,12 @@ namespace GStreamerDotNetTest
             Task.Delay(500).ContinueWith(_ => Start());
         }
 
+        // GstProcessManager.cs 맨 아래 부분
+
         private static string Encode(string value)
         {
-            if (string.IsNullOrEmpty(value)) return Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Empty));
+            // [수정] 빈 값일 경우 Base64 변환 시 ""가 되므로, 공백 파싱이 밀리는 문제 해결을 위해 명시적 토큰 사용
+            if (string.IsNullOrEmpty(value)) return "__EMPTY__";
             return Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
         }
 
