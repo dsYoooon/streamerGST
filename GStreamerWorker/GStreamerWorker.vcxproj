@@ -62,7 +62,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);gstreamer-1.0.lib;gstbase-1.0.lib;gstvideo-1.0.lib;gobject-2.0.lib;glib-2.0.lib;Shcore.lib;gstpbutils-1.0.lib;gstapp-1.0.lib;gstrtspserver-1.0.lib;gstrtsp-1.0.lib;gstd3d11-1.0.lib;QCAP.X64.LIB</AdditionalDependencies>
+      <AdditionalDependencies>$(CoreLibraryDependencies);%(AdditionalDependencies);gstreamer-1.0.lib;gstbase-1.0.lib;gstvideo-1.0.lib;gobject-2.0.lib;glib-2.0.lib;Shcore.lib;gstpbutils-1.0.lib;gstapp-1.0.lib;gstrtspserver-1.0.lib;gstrtsp-1.0.lib;gstd3d11-1.0.lib</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(VC_LibraryPath_x64);$(WindowsSDK_LibraryPath_x64);$(GSTREAMER_1_0_ROOT_MSVC_X86_64)lib</AdditionalLibraryDirectories>
     </Link>

@@ -80,7 +80,7 @@ namespace GStreamerWrapper {
         gboolean ok = FALSE;
         GstPad* src = NULL;
         GstPad* sink = NULL;
-
+        GstPadTemplate* tmpl = NULL;
         // 0) 안전: tsmux는 반드시 bin에 add된 상태여야 함
         if (!GST_IS_ELEMENT(tsmux) || !GST_OBJECT_PARENT(tsmux)) {
             g_printerr("%s: tsmux가 bin에 추가되지 않았습니다. (gst_bin_add 후 요청하세요)\n", tag_for_log);
@@ -95,7 +95,7 @@ namespace GStreamerWrapper {
         }
 
         // 2) mpegtsmux의 요청 가능한 sink 템플릿 찾기 (이름 하드코딩 X)
-        GstPadTemplate* tmpl = NULL;
+        
         {
             // 우선 흔한 이름 두 개를 먼저 시도
             tmpl = gst_element_get_pad_template(tsmux, "sink_%u");
