@@ -1,5 +1,6 @@
 #include "GStreamerWrapper.h"
 #include "ScreenCaptureServer.h"
+#include "WorkerClient.h"
 
 #include <vector>
 #include <string>
@@ -50,6 +51,8 @@ namespace GStreamerWrapper
             }
             return result;
         }
+
+        static WorkerClient g_worker_client;
 
         // ------------------------------------------------------------
         // CoreAudio helper: device enumeration (Render/Capture)
@@ -415,9 +418,11 @@ namespace GStreamerWrapper
             nativeConfigs.push_back(ncfg);
         }
 
-        RunScreenCaptureRtspServer(serverIpUtf8.empty() ? nullptr : serverIpUtf8.c_str(),
-            nativeConfigs.data(),
-            (int)nativeConfigs.size());
+        std::string error;
+        if (!g_worker_client.StartServer(serverIpUtf8, nativeConfigs, error))
+        {
+            Debug::WriteLine("start_server failed: " + gcnew String(error.c_str()));
+        }
     }
 
     void GstPlayer::Stop()
@@ -436,8 +441,12 @@ namespace GStreamerWrapper
             gst_print("GstPlayer::Stop 3\n");
             gcHandle.Free();
         }
-        // RTSP 서버가 실행 중이면 중지합니다.
-        StopScreenCaptureRtspServer();
+        // RTSP 서버가 실행 중이면 워커 프로세스에 정지 요청을 보냅니다.
+        std::string stopError;
+        if (!g_worker_client.StopServer(stopError) && !stopError.empty())
+        {
+            Debug::WriteLine("stop_server failed: " + gcnew String(stopError.c_str()));
+        }
     }
 
     void GstPlayer::StopPreview()
