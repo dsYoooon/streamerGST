@@ -203,7 +203,7 @@ namespace GStreamerDotNetTest
             // ★ 수정된 부분 2: UI 설정 대신 기본 설정 값 사용
             // =================================================================
             if (isFirst) _configs = CreateDefaultStreamConfigs(defaultStreamCount);
-            
+            _configs = CreateDefaultStreamConfigs(defaultStreamCount);
             // =================================================================
 
             _gstProcessManager?.SendStartServer(serverIp, _configs);
