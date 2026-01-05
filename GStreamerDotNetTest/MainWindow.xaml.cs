@@ -13,6 +13,7 @@ namespace GStreamerDotNetTest
     {
         private GstPlayer _player;
         private GstVideoHost _videoHost;
+        private readonly PipelineProcessManager _pipelineWorker = new PipelineProcessManager();
         private StreamConfig[] _configs = new StreamConfig[0];
         private string[] _audioDevices = new string[0];
         private string[] _networkInterfaceNames = new string[0];
@@ -215,8 +216,7 @@ namespace GStreamerDotNetTest
             
             // =================================================================
 
-            if (_player != null)
-                _player.StartScreenCaptureServer(serverIp, _configs);
+            _pipelineWorker.Start(serverIp, _configs);
         }
         private void btnPlay_Click(object sender, RoutedEventArgs e)
         {
@@ -330,11 +330,13 @@ namespace GStreamerDotNetTest
 
         private void btnStop_Click(object sender, RoutedEventArgs e)
         {
+            _pipelineWorker.Stop();
             if (_player != null) _player.Stop();
         }
 
         private void MainWindow_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
+            _pipelineWorker.Stop();
             if (_player != null) _player.Stop();
             GstPlayer.Deinitialize();
         }
