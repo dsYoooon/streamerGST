@@ -15,6 +15,9 @@
 #include <thread>
 #include <cstdio>
 #include <mutex>
+#include <atomic>
+#include <mmdeviceapi.h>
+#include <functiondiscoverykeys_devpkey.h>
 
 #include "ScreenCaptureServer.h"
 
@@ -46,9 +49,11 @@ namespace GStreamerWrapper {
         GMainContext* main_ctx = NULL;          // shared main context
         GstRTSPThreadPool* thread_pool = NULL;  // shared worker pool
         GstRTSPSessionPool* session_pool = NULL;// shared session pool
+        guint session_cleanup_id = 0;
         std::vector<ServerEntry> servers;       // N servers
         std::vector<GstRTSPMediaFactory*> factories; // N factories (1:1)
         std::vector<MulticastEntry> multicast_streams; // standalone UDP pipelines
+        std::atomic<bool> accept_enabled {false};
     };
 
     static RtspServerContext g_ctx;
@@ -148,6 +153,16 @@ namespace GStreamerWrapper {
         if (src)  gst_object_unref(src);
         if (sink) gst_object_unref(sink);
         return ok;
+    }
+    static gboolean enable_accept_gate_cb(gpointer user_data)
+    {
+        auto *ctx = (RtspServerContext *)user_data;
+        if (ctx)
+        {
+            ctx->accept_enabled.store(true, std::memory_order_release);
+            g_print(">>> accept gate: OPEN\n");
+        }
+        return G_SOURCE_REMOVE;
     }
 
 
@@ -279,20 +294,44 @@ namespace GStreamerWrapper {
         const gchar* ip = c ? gst_rtsp_connection_get_ip(c) : "unknown";
         g_print("<<< 클라이언트 종료: %s\n", ip ? ip : "unknown");
     }
-    static void client_connected_callback(GstRTSPServer*, GstRTSPClient* client, gpointer user_data) {
-        (void)user_data;
-        GstRTSPConnection* c = gst_rtsp_client_get_connection(client);
-        if (c) {
-            const gchar* ip = gst_rtsp_connection_get_ip(c);
+    static void client_connected_callback(GstRTSPServer *, GstRTSPClient *client, gpointer user_data)
+    {
+        auto *ctx = (RtspServerContext *)user_data;
+
+        // [추가] 서버 재시작 직후 N ms 동안 들어오는 연결은 즉시 차단
+        if (ctx && !ctx->accept_enabled.load(std::memory_order_acquire))
+        {
+            GstRTSPConnection *c = gst_rtsp_client_get_connection(client);
+            const gchar *ip = (c ? gst_rtsp_connection_get_ip(c) : "unknown");
+            g_print(">>> accept gate: 임시 차단 연결 (%s)\n", ip ? ip : "unknown");
+
+            gst_rtsp_client_close(client);
+            return;
+        }
+
+        GstRTSPConnection *c = gst_rtsp_client_get_connection(client);
+        if (c)
+        {
+            const gchar *ip = gst_rtsp_connection_get_ip(c);
             g_print(">>> 새로운 클라이언트: %s\n", ip ? ip : "unknown");
         }
+
         g_signal_connect(client, "closed", G_CALLBACK(client_closed_callback), user_data);
     }
+
     static GstRTSPFilterResult force_client_disconnect(GstRTSPServer*, GstRTSPClient* client, gpointer) {
         gst_rtsp_client_close(client);
         return GST_RTSP_FILTER_REMOVE;
     }
-
+    // [추가] 주기적인 세션 정리 콜백 (5초마다 실행됨)
+    static gboolean periodic_session_cleanup(gpointer user_data) {
+        RtspServerContext* ctx = (RtspServerContext*)user_data;
+        if (ctx && ctx->session_pool) {
+            // 만료된 세션 정리 (TCP 연결이 끊겼는데 남아있는 세션 제거)
+            gst_rtsp_session_pool_cleanup(ctx->session_pool);
+        }
+        return G_SOURCE_CONTINUE; // 타이머 계속 유지
+    }
     typedef struct _MyRtspMedia {
         GstRTSPMedia parent;
     } MyRtspMedia;
@@ -448,6 +487,31 @@ namespace GStreamerWrapper {
         gboolean ok = caps ? gst_element_link_filtered(a, b, caps) : gst_element_link(a, b);
         if (caps) gst_caps_unref(caps);
         return ok;
+    }
+    bool HasActiveAudioEndpoint(EDataFlow flow)
+    {
+        HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        bool coInited = SUCCEEDED(hr) || hr == RPC_E_CHANGED_MODE;
+
+        IMMDeviceEnumerator *en = nullptr;
+        hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+            __uuidof(IMMDeviceEnumerator), (void **)&en);
+        if (FAILED(hr) || !en)
+        {
+            if (coInited) CoUninitialize(); return false;
+        }
+
+        IMMDeviceCollection *col = nullptr;
+        hr = en->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &col);
+
+        UINT count = 0;
+        if (SUCCEEDED(hr) && col) col->GetCount(&count);
+
+        if (col) col->Release();
+        en->Release();
+        if (coInited) CoUninitialize();
+
+        return count > 0;
     }
 
     static gboolean link_queue_to_encoder(
@@ -739,6 +803,8 @@ namespace GStreamerWrapper {
 
         /* --- 오디오 (선택) --- */
            /* --- 오디오 (선택) --- */
+        if (!HasActiveAudioEndpoint(eCapture) && !HasActiveAudioEndpoint(eRender)) self->enable_audio = false; // -> 오디오 체인 생성 금지
+         //if (!HasActiveAudioEndpoint(eRender)) self->enable_audio = false; // -> loopback 소스 생성 금지
         if (self->enable_audio)
         {
             GstElement *asrc = gst_element_factory_make("wasapi2src", "asrc");
@@ -1287,7 +1353,7 @@ namespace GStreamerWrapper {
         f->out_w = cfg.width > 0 ? cfg.width : 1920;
         f->out_h = cfg.height > 0 ? cfg.height : 1080;
         f->fps = cfg.framerate > 0 ? cfg.framerate : 30;
-        f->v_bitrate_kbps = cfg.bitrate_kbps > 0 ? cfg.bitrate_kbps : 8000;
+        f->v_bitrate_kbps = cfg.bitrate_kbps > 0 ? cfg.bitrate_kbps : 3000;
         f->a_bitrate_bps = 128000;
         f->enable_audio = cfg.enable_audio;
         f->enable_hw_accel = cfg.enable_hw_accel;
@@ -1335,10 +1401,11 @@ namespace GStreamerWrapper {
 
         gst_rtsp_media_factory_set_shared(GST_RTSP_MEDIA_FACTORY(f), TRUE);
         gst_rtsp_media_factory_set_suspend_mode(GST_RTSP_MEDIA_FACTORY(f), GST_RTSP_SUSPEND_MODE_NONE);
+        gst_rtsp_media_factory_set_eos_shutdown(GST_RTSP_MEDIA_FACTORY(f), FALSE);
         g_signal_connect(f, "media-configure", G_CALLBACK(on_media_configure), NULL);
 
         // 서버단 레이턴시(여유)
-        gst_rtsp_media_factory_set_latency(GST_RTSP_MEDIA_FACTORY(f), 300);
+        gst_rtsp_media_factory_set_latency(GST_RTSP_MEDIA_FACTORY(f), 150);
 
         // 프로토콜/멀티캐스트 (운영 정책에 따라 조정)
         if (f->enable_multicast) {
@@ -1362,7 +1429,7 @@ namespace GStreamerWrapper {
         }
         else {
             gst_rtsp_media_factory_set_protocols(GST_RTSP_MEDIA_FACTORY(f),
-               (GstRTSPLowerTrans) (GST_RTSP_LOWER_TRANS_UDP | GST_RTSP_LOWER_TRANS_TCP));
+                (GstRTSPLowerTrans)(GST_RTSP_LOWER_TRANS_UDP));// | GST_RTSP_LOWER_TRANS_TCP));
 
         }
       
@@ -1457,7 +1524,7 @@ namespace GStreamerWrapper {
 
         // 공유 SessionPool 생성
         ctx->session_pool = gst_rtsp_session_pool_new();
-        gst_rtsp_session_pool_set_max_sessions(ctx->session_pool, 32);
+        gst_rtsp_session_pool_set_max_sessions(ctx->session_pool, 128);
     }
 
     static void configure_rtsp_server(RtspServerContext* ctx) {
@@ -1518,6 +1585,13 @@ namespace GStreamerWrapper {
     }
 
     static bool start_rtsp_server(RtspServerContext* ctx) {
+
+            // [추가] 시작 직후 게이트 닫기
+        ctx->accept_enabled.store(false, std::memory_order_release);
+
+        // [추가] 300ms 뒤 게이트 오픈 (200~500ms 중간값 추천)
+        g_timeout_add(500, enable_accept_gate_cb, ctx);
+
         // 모든 서버를 공유 GLib 컨텍스트에 attach
         for (auto& se : ctx->servers) {
             se.source_id = gst_rtsp_server_attach(se.server, ctx->main_ctx);
@@ -1525,6 +1599,7 @@ namespace GStreamerWrapper {
                 g_printerr("RTSP 서버 attach 실패 (port=%d)\n", se.service_port);
                 return false;
             }
+
             g_print("RTSP 서버가 시작되었습니다. 예: rtsp://%s:%d/screen1\n",
                 g_server_ip.c_str(), se.service_port);
         }
@@ -1542,14 +1617,17 @@ namespace GStreamerWrapper {
                     mc.audio_port > 0 ? " (audio)" : "");
             }
         }
-
+        ctx->session_cleanup_id = g_timeout_add_seconds(10, periodic_session_cleanup, ctx);
         g_main_loop_run(ctx->loop);
         return true;
     }
 
     static void cleanup_resources(RtspServerContext* ctx) {
         g_print("5. 리소스 해제...\n");
-
+        if (ctx->session_cleanup_id > 0) {
+            g_source_remove(ctx->session_cleanup_id);
+            ctx->session_cleanup_id = 0;
+        }
         // detach
         for (auto& se : ctx->servers) {
             if (se.source_id != 0) {
@@ -1607,6 +1685,7 @@ namespace GStreamerWrapper {
     // g_main_context_invoke()로 호출되어 RTSP 서버 쓰레드에서만 실행됩니다.
     static gboolean stop_server_on_main_loop(gpointer /*user_data*/)
     {
+        g_ctx.accept_enabled.store(false, std::memory_order_release);
         for (auto& se : g_ctx.servers) {
             if (se.server) {
                 gst_rtsp_server_client_filter(se.server, force_client_disconnect, NULL);
@@ -1628,10 +1707,11 @@ namespace GStreamerWrapper {
     }
 
     void StopScreenCaptureRtspServer() {
+        gst_print("GstPlayer::StopScreenCaptureRtspServer called\n");
         if (!g_server_thread.joinable()) {
             return;
         }
-
+        gst_print("GstPlayer::StopScreenCaptureRtspServer 1\n");
         if (g_ctx.main_ctx) {
             g_main_context_invoke_full(
                 g_ctx.main_ctx,
@@ -1645,7 +1725,7 @@ namespace GStreamerWrapper {
         else if (g_ctx.loop) {
             g_main_loop_quit(g_ctx.loop);
         }
-
+        gst_print("GstPlayer::StopScreenCaptureRtspServer 2\n");
         if (g_server_thread.joinable()) {
             g_server_thread.join();
         }

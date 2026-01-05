@@ -5,7 +5,8 @@
 #include <vcclr.h>
 #include <Windows.h>
 
-namespace GStreamerWrapper {
+namespace GStreamerWrapper
+{
 
     using namespace System;
     using namespace System::Runtime::InteropServices; // for GCHandle
@@ -22,28 +23,28 @@ namespace GStreamerWrapper {
         int Framerate;
         int BitrateKbps;
         int KeyframeInterval;
-		int Port;
-		int StreamIndex;
+        int Port;
+        int StreamIndex;
         bool EnableAudio;
-        String^ AudioDevice;
+        String ^AudioDevice;
         bool EnableHardwareAccel;
         bool EnableOsd;
         bool EnableMultiCast;
-        String^ BitrateControl;
-        String^ Profile;
-        String^ OsdText;
-        String^ MultiCastIP;
-        String^ MultiCastInterface;
+        String ^BitrateControl;
+        String ^Profile;
+        String ^OsdText;
+        String ^MultiCastIP;
+        String ^MultiCastInterface;
     };
 
     public ref class GstPlayer
     {
     private:
-        GstElement* pipeline;
+        GstElement *pipeline;
         GCHandle gcHandle;
 
-        static void BusMessageCallback(GstBus* bus, GstMessage* msg, gpointer data);
-        void HandleBusMessage(GstMessage* msg);
+        static void BusMessageCallback(GstBus *bus, GstMessage *msg, gpointer data);
+        void HandleBusMessage(GstMessage *msg);
 
     public:
         HWND videoHwnd;
@@ -52,11 +53,22 @@ namespace GStreamerWrapper {
         !GstPlayer();
 
         void StartScreenCapture(StreamConfig config);
-        void StartScreenCaptureServer(String^ serverIp, array<StreamConfig>^ configs);
+        void StartScreenCaptureServer(String ^serverIp, array<StreamConfig> ^configs);
         void Stop();
         void StopPreview();
         static void Initialize();
         static void Deinitialize();
-        static array<String^>^ GetAudioDevices();
+
+        // 기존 API 유지: Capture(마이크) 장치 이름 목록
+        static array<String ^> ^GetAudioDevices();
+
+        // 추가: Render(출력) 장치 이름 목록 (loopback/UI용)
+        static array<String ^> ^GetRenderDevices();
+
+        // 추가: Render/Capture ACTIVE 존재 여부 (오디오 체인 생성 여부 판단용)
+        static bool HasActiveAudioEndpoint(bool wantRender);
+
+        // (선택) 위험한 GstDeviceMonitor 폴백을 켤지 여부 (기본 false 권장)
+        static void SetUseGstDeviceMonitorFallback(bool enable);
     };
 }
