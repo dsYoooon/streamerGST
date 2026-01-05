@@ -167,6 +167,15 @@ namespace GStreamerDotNetTest
             SendCommand("CMD_STOP_PREVIEW");
         }
 
+        public void SendUpdatePreviewRectangle(IntPtr hwnd)
+        {
+            _lastPreviewHandle = hwnd;
+            if (hwnd == IntPtr.Zero)
+                return;
+
+            SendCommand($"CMD_UPDATE_PREVIEW_RECT {hwnd.ToInt64()}");
+        }
+
         private void SendCommand(string command)
         {
             lock (_sync)

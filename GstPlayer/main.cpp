@@ -197,6 +197,15 @@ int main()
             StopPreview();
             std::cout << "PREVIEW_STOPPED" << std::endl;
         }
+        else if (cmd == "CMD_UPDATE_PREVIEW_RECT")
+        {
+            long long hwnd_val = 0;
+            if (iss >> hwnd_val)
+            {
+                bool updated = RefreshPreviewOverlay(reinterpret_cast<HWND>(static_cast<intptr_t>(hwnd_val)));
+                std::cout << (updated ? "PREVIEW_RECT_UPDATED" : "PREVIEW_RECT_SKIPPED") << std::endl;
+            }
+        }
         else if (cmd == "CMD_EXIT")
         {
             break;
