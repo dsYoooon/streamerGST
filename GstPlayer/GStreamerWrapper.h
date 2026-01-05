@@ -42,9 +42,13 @@ namespace GStreamerWrapper
     private:
         GstElement *pipeline;
         GCHandle gcHandle;
+        System::Diagnostics::Process ^workerProcess;
+        System::String ^workerConfigPath;
 
         static void BusMessageCallback(GstBus *bus, GstMessage *msg, gpointer data);
         void HandleBusMessage(GstMessage *msg);
+        void StopWorker();
+        void LaunchWorkerWithConfig(System::String ^configContent);
 
     public:
         HWND videoHwnd;
