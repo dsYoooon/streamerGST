@@ -173,6 +173,7 @@
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="DisplayHelper.cs" />
+    <Compile Include="GstProcessManager.cs" />
     <Compile Include="GstVideoHost.cs" />
     <Compile Include="MainWindow.xaml.cs">
       <DependentUpon>MainWindow.xaml</DependentUpon>

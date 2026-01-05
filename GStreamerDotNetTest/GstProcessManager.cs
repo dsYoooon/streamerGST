@@ -1,0 +1,207 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace GStreamerDotNetTest
+{
+    public class StreamConfig
+    {
+        public int MonitorIndex { get; set; }
+        public int CropX { get; set; }
+        public int CropY { get; set; }
+        public int CropW { get; set; }
+        public int CropH { get; set; }
+        public int Width { get; set; }
+        public int Height { get; set; }
+        public int Framerate { get; set; }
+        public int BitrateKbps { get; set; }
+        public int KeyframeInterval { get; set; }
+        public int Port { get; set; }
+        public int StreamIndex { get; set; }
+        public bool EnableAudio { get; set; }
+        public bool EnableMultiCast { get; set; }
+        public string AudioDevice { get; set; }
+        public bool EnableHardwareAccel { get; set; }
+        public bool EnableOsd { get; set; }
+        public string BitrateControl { get; set; }
+        public string Profile { get; set; }
+        public string OsdText { get; set; }
+        public string MultiCastIP { get; set; }
+        public string MultiCastInterface { get; set; }
+    }
+
+    public class GstProcessManager : IDisposable
+    {
+        private Process _process;
+        private readonly object _sync = new object();
+        private StreamConfig[] _lastConfigs = Array.Empty<StreamConfig>();
+        private string _lastServerIp = string.Empty;
+        private IntPtr _lastPreviewHandle = IntPtr.Zero;
+        private int _lastPreviewMonitor = 0;
+        private bool _disposed;
+
+        public event Action<string> OutputReceived;
+
+        public string ExecutablePath { get; set; }
+
+        public GstProcessManager(string executablePath)
+        {
+            ExecutablePath = executablePath;
+        }
+
+        public void Start()
+        {
+            lock (_sync)
+            {
+                if (_process != null && !_process.HasExited)
+                    return;
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = ExecutablePath,
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+
+                _process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+                _process.Exited += OnProcessExited;
+                _process.OutputDataReceived += (s, e) =>
+                {
+                    if (e.Data != null)
+                        OutputReceived?.Invoke(e.Data);
+                };
+
+                _process.Start();
+                _process.BeginOutputReadLine();
+
+                if (_lastConfigs.Length > 0)
+                {
+                    SendStartServer(_lastServerIp, _lastConfigs);
+                }
+                if (_lastPreviewHandle != IntPtr.Zero)
+                {
+                    SendStartPreview(_lastPreviewHandle, _lastPreviewMonitor);
+                }
+            }
+        }
+
+        public void Stop()
+        {
+            lock (_sync)
+            {
+                try
+                {
+                    _process?.StandardInput.WriteLine("CMD_EXIT");
+                }
+                catch { }
+                finally
+                {
+                    _process?.Kill();
+                    _process?.Dispose();
+                    _process = null;
+                }
+            }
+        }
+
+        public void Restart()
+        {
+            Stop();
+            Start();
+        }
+
+        public void SendStartServer(string serverIp, StreamConfig[] configs)
+        {
+            if (configs == null) configs = Array.Empty<StreamConfig>();
+            _lastConfigs = configs.ToArray();
+            _lastServerIp = serverIp ?? string.Empty;
+            var cmd = new StringBuilder();
+            cmd.Append("CMD_START_SERVER ");
+            cmd.Append(_lastServerIp.Replace(' ', '_')); // IP는 공백 없음
+            cmd.Append(' ');
+            cmd.Append(_lastConfigs.Length);
+
+            foreach (var c in _lastConfigs)
+            {
+                cmd.AppendFormat(" {0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} {12} {13} {14} {15} {16} {17} {18} {19} {20} {21}",
+                    c.MonitorIndex,
+                    c.CropX,
+                    c.CropY,
+                    c.CropW,
+                    c.CropH,
+                    c.Width,
+                    c.Height,
+                    c.Framerate,
+                    c.BitrateKbps,
+                    c.KeyframeInterval,
+                    c.Port,
+                    c.StreamIndex,
+                    c.EnableAudio ? 1 : 0,
+                    c.EnableMultiCast ? 1 : 0,
+                    Encode(c.AudioDevice),
+                    c.EnableHardwareAccel ? 1 : 0,
+                    c.EnableOsd ? 1 : 0,
+                    Encode(c.BitrateControl),
+                    Encode(c.Profile),
+                    Encode(c.OsdText),
+                    Encode(c.MultiCastIP),
+                    Encode(c.MultiCastInterface));
+            }
+
+            SendCommand(cmd.ToString());
+        }
+
+        public void SendStopServer()
+        {
+            SendCommand("CMD_STOP_SERVER");
+        }
+
+        public void SendStartPreview(IntPtr hwnd, int monitorIndex)
+        {
+            _lastPreviewHandle = hwnd;
+            _lastPreviewMonitor = monitorIndex;
+            SendCommand($"CMD_START_PREVIEW {hwnd.ToInt64()} {monitorIndex}");
+        }
+
+        public void SendStopPreview()
+        {
+            _lastPreviewHandle = IntPtr.Zero;
+            SendCommand("CMD_STOP_PREVIEW");
+        }
+
+        private void SendCommand(string command)
+        {
+            lock (_sync)
+            {
+                if (_process == null || _process.HasExited)
+                    return;
+                _process.StandardInput.WriteLine(command);
+                _process.StandardInput.Flush();
+            }
+        }
+
+        private void OnProcessExited(object sender, EventArgs e)
+        {
+            if (_disposed) return;
+            Task.Delay(500).ContinueWith(_ => Start());
+        }
+
+        private static string Encode(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Empty));
+            return Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+        }
+
+        public void Dispose()
+        {
+            _disposed = true;
+            Stop();
+        }
+    }
+}
+
