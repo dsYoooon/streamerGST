@@ -3,6 +3,7 @@
 #include <gst/gst.h>
 #include <gst/video/videooverlay.h>
 #include <vcclr.h>
+#define NOMINMAX
 #include <Windows.h>
 
 namespace GStreamerWrapper

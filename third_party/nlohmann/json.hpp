@@ -2478,6 +2478,10 @@ JSON_HEDLEY_DIAGNOSTIC_POP
     // ranges header shipping in GCC 11.1.0 (released 2021-04-27) has syntax error
     #if defined(__GLIBCXX__) && __GLIBCXX__ == 20210427
         #define JSON_HAS_RANGES 0
+  // MSVC reports __cpp_lib_ranges for some toolsets while targeting pre-C++20
+    // language levels, which breaks the ranges-based declarations below.
+#elif defined(_MSC_VER) && (!defined(_MSVC_LANG) || _MSVC_LANG < 202002L)
+#define JSON_HAS_RANGES 0
     #elif defined(__cpp_lib_ranges)
         #define JSON_HAS_RANGES 1
     #else

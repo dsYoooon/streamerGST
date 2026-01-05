@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#define NOMINMAX
 #include <windows.h>
 
 #include "ScreenCaptureServer.h"
