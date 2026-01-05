@@ -14,6 +14,7 @@ namespace GStreamerWrapper
         GstBus* g_preview_bus = nullptr;
         HWND g_preview_window = nullptr;
 
+
         void UpdateOverlayGeometry(GstElement* sink, HWND window);
 
         GstBusSyncReply PreviewBusSyncHandler(GstBus* bus, GstMessage* msg, gpointer user_data)
@@ -25,6 +26,7 @@ namespace GStreamerWrapper
                 GstVideoOverlay* overlay = GST_VIDEO_OVERLAY(GST_MESSAGE_SRC(msg));
                 gst_video_overlay_set_window_handle(overlay, (guintptr)window);
                 UpdateOverlayGeometry(GST_ELEMENT(overlay), window);
+
                 return GST_BUS_DROP;
             }
 
