@@ -5,17 +5,12 @@ using System.Windows.Interop;
 
 namespace GStreamerDotNetTest
 {
-    /// <summary>
-    /// GStreamer sink(d3d11videosink 등)에 넘길 자식 HWND를 제공하는 WPF 전용 HwndHost.
-    /// WinForms 의존 없음.
-    /// </summary>
     public class GstVideoHost : HwndHost
     {
         // ===== Win32 P/Invoke =====
         [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "CreateWindowExW", SetLastError = true)]
         private static extern IntPtr CreateWindowEx(
-            int exStyle,
-            string lpszClass, string lpszName, int style,
+            int exStyle, string lpszClass, string lpszName, int style,
             int x, int y, int width, int height,
             IntPtr hwndParent, IntPtr hMenu, IntPtr hInst, IntPtr pvParam);
 
@@ -36,94 +31,60 @@ namespace GStreamerDotNetTest
         private const uint SWP_NOZORDER = 0x0004;
         private const uint SWP_NOACTIVATE = 0x0010;
 
-        // ===== State =====
         private IntPtr _hwnd = IntPtr.Zero;
-
-        /// <summary>호스팅되는 자식 HWND (GStreamer window-handle로 전달)</summary>
         public IntPtr Handle => _hwnd;
 
-        /// <summary>자식 HWND가 만들어진 직후 알림</summary>
-        public event EventHandler HwndCreated;
+        // [변경] 크기 변경 시 폭/높이를 인자로 전달하는 이벤트
+        public event Action<int, int> WindowResized;
 
-        /// <summary>자식 HWND가 파괴된 직후 알림</summary>
-        public event EventHandler HwndDestroyed;
-
-        /// <summary>자식 HWND의 크기가 바뀌었을 때 알림 (미리보기 렌더링 영역 보정용)</summary>
-        public event EventHandler HwndResized;
-
-        // ===== HwndHost overrides =====
         protected override HandleRef BuildWindowCore(HandleRef hwndParent)
         {
-            // WPF가 실제 배치 전에 ActualWidth/Height가 0일 수 있으므로 안전값 1로 생성
             int w = Math.Max(1, (int)ActualWidth);
             int h = Math.Max(1, (int)ActualHeight);
 
-            int style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
-
-            // lightweight 자식 윈도우(정적 컨트롤) 생성, GStreamer가 여기에 그리도록 함
+            // C# 쪽은 단순히 자리를 차지하는 부모 윈도우(Static)만 생성
             _hwnd = CreateWindowEx(
-                0,
-                "STATIC",                    // 기본 존재하는 윈도우 클래스
-                string.Empty,
-                style,
+                0, "STATIC", "",
+                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
                 0, 0, w, h,
                 hwndParent.Handle,
                 IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
 
             if (_hwnd == IntPtr.Zero)
-            {
-                int err = Marshal.GetLastWin32Error();
-                throw new InvalidOperationException($"CreateWindowEx failed: {err}");
-            }
+                throw new InvalidOperationException($"CreateWindowEx failed: {Marshal.GetLastWin32Error()}");
 
-            HwndCreated?.Invoke(this, EventArgs.Empty);
             return new HandleRef(this, _hwnd);
         }
 
         protected override void DestroyWindowCore(HandleRef hwnd)
         {
-            try
-            {
-                if (hwnd.Handle != IntPtr.Zero)
-                {
-                    DestroyWindow(hwnd.Handle);
-                }
-            }
-            finally
-            {
-                _hwnd = IntPtr.Zero;
-                HwndDestroyed?.Invoke(this, EventArgs.Empty);
-            }
+            if (hwnd.Handle != IntPtr.Zero)
+                DestroyWindow(hwnd.Handle);
+            _hwnd = IntPtr.Zero;
         }
 
-        /// <summary>
-        /// HwndHost의 배치 경계가 바뀔 때마다 네이티브 자식 창 크기를 즉시 동기화.
-        /// </summary>
         protected override void OnWindowPositionChanged(Rect rcBoundingBox)
         {
             base.OnWindowPositionChanged(rcBoundingBox);
-            if (_hwnd != IntPtr.Zero)
-            {
-                int w = Math.Max(1, (int)Math.Round(rcBoundingBox.Width));
-                int h = Math.Max(1, (int)Math.Round(rcBoundingBox.Height));
-                SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
-                HwndResized?.Invoke(this, EventArgs.Empty);
-            }
+            UpdateWindowSize(rcBoundingBox.Width, rcBoundingBox.Height);
         }
 
-        /// <summary>
-        /// 일부 시나리오에서 레이아웃만 변하고 WindowPositionChanged가 늦게 오는 경우가 있어
-        /// 렌더 크기 변경에도 한 번 더 보정.
-        /// </summary>
         protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
         {
             base.OnRenderSizeChanged(sizeInfo);
+            UpdateWindowSize(sizeInfo.NewSize.Width, sizeInfo.NewSize.Height);
+        }
+
+        private void UpdateWindowSize(double width, double height)
+        {
             if (_hwnd != IntPtr.Zero)
             {
-                int w = Math.Max(1, (int)Math.Round(sizeInfo.NewSize.Width));
-                int h = Math.Max(1, (int)Math.Round(sizeInfo.NewSize.Height));
+                int w = Math.Max(1, (int)Math.Round(width));
+                int h = Math.Max(1, (int)Math.Round(height));
                 SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
-                HwndResized?.Invoke(this, EventArgs.Empty);
+
+                // [중요] 리사이즈 이벤트 발생 -> 메인 윈도우에서 잡아서 C++로 전송
+                WindowResized?.Invoke(w, h);
             }
         }
     }

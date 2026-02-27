@@ -166,7 +166,23 @@ namespace GStreamerDotNetTest
             _lastPreviewHandle = IntPtr.Zero;
             SendCommand("CMD_STOP_PREVIEW");
         }
+        // ... 기존 SendStopPreview 메서드 아래에 추가 ...
 
+        // [변경] 단순 Rect 업데이트가 아니라 명시적 리사이즈 명령 전송
+        public void SendResize(int width, int height)
+        {
+            lock (_sync)
+            {
+                if (_process != null && !_process.HasExited)
+                {
+                    // 프로토콜: CMD_RESIZE Width Height
+                    _process.StandardInput.WriteLine($"CMD_RESIZE {width} {height}");
+                    _process.StandardInput.Flush();
+                }
+            }
+        }
+
+        // 기존 SendUpdatePreviewRectangle은 더 이상 쓰지 않으므로 제거하거나 무시해도 됩니다.
         public void SendUpdatePreviewRectangle(IntPtr hwnd)
         {
             _lastPreviewHandle = hwnd;

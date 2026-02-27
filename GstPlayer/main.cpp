@@ -1,6 +1,4 @@
-﻿// main.cpp 전체 교체 또는 해당 함수 수정
-
-#include "GStreamerWrapper.h"
+﻿#include "GStreamerWrapper.h"
 #include "ScreenCaptureServer.h"
 
 #include <gst/gst.h>
@@ -11,6 +9,9 @@
 #include <vector>
 #include <string>
 
+// [필수] 콘솔 설정용 (필요시)
+#include <windows.h> 
+
 using namespace GStreamerWrapper;
 
 namespace
@@ -20,7 +21,6 @@ namespace
     HWND g_last_preview_hwnd = nullptr;
     int g_last_preview_monitor = 0;
 
-    // [수정] __EMPTY__ 토큰 처리 추가
     std::string DecodeBase64(const std::string& value)
     {
         if (value == "__EMPTY__") return "";
@@ -39,25 +39,17 @@ namespace
     bool ParseStreamConfig(std::istream& iss, StreamConfigNative& cfg)
     {
         std::string audio_b64, bitrate_b64, profile_b64, osd_b64, mc_ip_b64, mc_iface_b64;
-
-        // [수정] bool 타입은 직접 읽지 말고 int로 읽어서 변환 (스트림 파싱 안정성)
         int i_audio = 0, i_multicast = 0, i_hw = 0, i_osd = 0;
 
         if (!(iss >> cfg.monitor_index >> cfg.crop_x >> cfg.crop_y >> cfg.crop_w >> cfg.crop_h
             >> cfg.width >> cfg.height >> cfg.framerate >> cfg.bitrate_kbps >> cfg.keyframe_interval
             >> cfg.port >> cfg.streamIndex
-            >> i_audio          // bool -> int
-            >> i_multicast      // bool -> int
-            >> audio_b64
-            >> i_hw             // bool -> int
-            >> i_osd            // bool -> int
-            >> bitrate_b64 >> profile_b64
-            >> osd_b64 >> mc_ip_b64 >> mc_iface_b64))
+            >> i_audio >> i_multicast >> audio_b64 >> i_hw >> i_osd
+            >> bitrate_b64 >> profile_b64 >> osd_b64 >> mc_ip_b64 >> mc_iface_b64))
         {
             return false;
         }
 
-        // int -> bool 변환
         cfg.enable_audio = (i_audio != 0);
         cfg.enable_multicast = (i_multicast != 0);
         cfg.enable_hw_accel = (i_hw != 0);
@@ -79,17 +71,12 @@ namespace
         for (int i = 0; i < count; ++i)
         {
             StreamConfigNative cfg{};
-            if (!ParseStreamConfig(iss, cfg))
-            {
-                return false;
-            }
-
+            if (!ParseStreamConfig(iss, cfg)) return false;
             out.push_back(cfg);
         }
         return true;
     }
 
-    // ... 나머지 StartServer, StartPreviewWithMonitor 함수는 기존과 동일 ...
     void StartServer(const std::string& ip, const std::vector<StreamConfigNative>& configs)
     {
         g_last_server_ip = ip;
@@ -103,27 +90,23 @@ namespace
         g_last_preview_monitor = monitorIndex;
 
         StreamConfigNative cfg{};
-        // 기본값 설정 (혹시 config가 없을 경우 안전장치)
+        // 기본값
         cfg.monitor_index = monitorIndex;
         cfg.framerate = 30;
 
+        // 마지막 설정에서 해당 모니터 설정 검색
         if (!g_last_configs.empty())
         {
-            // monitorIndex에 맞는 설정 찾기, 없으면 첫 번째 것 사용 (또는 기본값)
             bool found = false;
-            for (const auto& c : g_last_configs)
-            {
-                if (c.monitor_index == monitorIndex)
-                {
-                    cfg = c;
-                    found = true;
-                    break;
+            for (const auto& c : g_last_configs) {
+                if (c.monitor_index == monitorIndex) {
+                    cfg = c; found = true; break;
                 }
             }
             if (!found) cfg = g_last_configs.front();
         }
 
-        // Preview용 강제 설정 (필요 시)
+        // Preview 강제 덮어쓰기
         cfg.monitor_index = monitorIndex;
 
         StartPreview(cfg, hwnd);
@@ -132,7 +115,7 @@ namespace
 
 int main()
 {
-    // [중요] C++ 표준 입출력 속도 향상 및 버퍼링 이슈 방지
+    // 입출력 최적화
     std::ios::sync_with_stdio(false);
     std::cin.tie(nullptr);
 
@@ -141,7 +124,6 @@ int main()
     std::string line;
     while (std::getline(std::cin, line))
     {
-        //SetConsoleOutputCP(CP_UTF8);
         if (line.empty()) continue;
 
         std::istringstream iss(line);
@@ -153,10 +135,6 @@ int main()
             std::string ip;
             int count = 0;
             iss >> ip >> count;
-
-            // ip 문자열의 '_'를 다시 공백으로 복구할 필요가 있다면 여기서 처리
-            // (현재 C#에서 Replace(' ', '_') 했으므로 IP에는 영향 없음)
-
             std::vector<StreamConfigNative> configs;
             if (!ParseStreamConfigs(iss, count, configs))
             {
@@ -176,18 +154,15 @@ int main()
             long long hwnd_val = 0;
             int monitorIdx = 0;
             if (iss >> hwnd_val >> monitorIdx) {
-                // 선택적으로 미리보기 설정을 함께 전달받을 수 있음 (CFG 토큰 이후)
+                // 추가 옵션(CFG) 파싱이 필요하면 여기에 추가
                 std::string token;
-                if (iss >> token && token == "CFG")
-                {
+                if (iss >> token && token == "CFG") {
                     StreamConfigNative cfg{};
-                    if (ParseStreamConfig(iss, cfg))
-                    {
+                    if (ParseStreamConfig(iss, cfg)) {
                         g_last_configs.clear();
                         g_last_configs.push_back(cfg);
                     }
                 }
-
                 StartPreviewWithMonitor(reinterpret_cast<HWND>(static_cast<intptr_t>(hwnd_val)), monitorIdx);
                 std::cout << "PREVIEW_STARTED" << std::endl;
             }
@@ -197,23 +172,19 @@ int main()
             StopPreview();
             std::cout << "PREVIEW_STOPPED" << std::endl;
         }
-        else if (cmd == "CMD_UPDATE_PREVIEW_RECT")
+        // [추가] 리사이즈 처리
+        else if (cmd == "CMD_RESIZE")
         {
-            long long hwnd_val = 0;
-            if (iss >> hwnd_val)
-            {
-                bool updated = RefreshPreviewOverlay(reinterpret_cast<HWND>(static_cast<intptr_t>(hwnd_val)));
-                std::cout << (updated ? "PREVIEW_RECT_UPDATED" : "PREVIEW_RECT_SKIPPED") << std::endl;
+            int w = 0, h = 0;
+            if (iss >> w >> h) {
+                ResizePreview(w, h);
+                // 응답은 필요없으면 생략 가능
+                // std::cout << "RESIZED" << std::endl; 
             }
         }
         else if (cmd == "CMD_EXIT")
         {
             break;
-        }
-        else
-        {
-            // 알 수 없는 커맨드 디버깅용
-            // std::cout << "UNKNOWN_CMD: " << cmd << std::endl;
         }
     }
 

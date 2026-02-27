@@ -5,108 +5,128 @@
 #include <gst/video/videooverlay.h>
 #include <glib.h>
 #include <sstream>
+#include <thread>
+#include <atomic>
+#include <tchar.h>
 
 namespace GStreamerWrapper
 {
     namespace
     {
         GstElement* g_preview_pipeline = nullptr;
-        GstBus* g_preview_bus = nullptr;
-        HWND g_preview_window = nullptr;
 
+        // 윈도우 관리용 전역 변수
+        std::thread g_window_thread;
+        std::atomic<HWND> g_child_hwnd{ nullptr }; // GStreamer가 그릴 실제 윈도우 (자식)
+        std::atomic<bool> g_stop_window_thread{ false };
 
-        void UpdateOverlayGeometry(GstElement* sink, HWND window);
+        // 윈도우 프로시저 (메시지 처리)
+        LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+            return DefWindowProc(hwnd, msg, wParam, lParam);
+        }
 
-        GstBusSyncReply PreviewBusSyncHandler(GstBus* bus, GstMessage* msg, gpointer user_data)
-        {
-            HWND window = reinterpret_cast<HWND>(user_data);
+        // 별도 스레드에서 윈도우 생성 및 메시지 루프 실행
+        void WindowThreadFunc(HWND parent_hwnd) {
+            // 1. 윈도우 클래스 등록 (유니크한 이름 사용)
+            WNDCLASSEX wc = { 0 };
+            wc.cbSize = sizeof(WNDCLASSEX);
+            wc.style = CS_HREDRAW | CS_VREDRAW;
+            wc.lpfnWndProc = PreviewWndProc;
+            wc.hInstance = GetModuleHandle(NULL);
+            wc.lpszClassName = _T("GstPreviewClass_Sub");
+            wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+            wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+            RegisterClassEx(&wc);
 
-            if (window && gst_is_video_overlay_prepare_window_handle_message(msg))
-            {
-                GstVideoOverlay* overlay = GST_VIDEO_OVERLAY(GST_MESSAGE_SRC(msg));
-                gst_video_overlay_set_window_handle(overlay, (guintptr)window);
-                UpdateOverlayGeometry(GST_ELEMENT(overlay), window);
+            // 2. 자식 윈도우 생성 (부모: C#에서 받은 핸들)
+            // WS_CHILD 스타일 필수
+            HWND child = CreateWindowEx(
+                0, _T("GstPreviewClass_Sub"), _T("GstChild"),
+                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+                0, 0, 800, 600, // 초기 크기 (나중에 ResizePreview로 조절됨)
+                parent_hwnd, NULL, GetModuleHandle(NULL), NULL
+            );
 
-                return GST_BUS_DROP;
+            g_child_hwnd.store(child);
+
+            // 3. 메시지 루프 (d3d11videosink가 이 루프에 의존하여 화면을 갱신함)
+            MSG msg;
+            while (!g_stop_window_thread.load() && GetMessage(&msg, NULL, 0, 0)) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
             }
 
-            return GST_BUS_PASS;
+            // 종료 처리
+            if (child) DestroyWindow(child);
+            UnregisterClass(_T("GstPreviewClass_Sub"), GetModuleHandle(NULL));
+            g_child_hwnd.store(nullptr);
         }
 
         void StopPreviewInternal()
         {
-            if (g_preview_pipeline)
-            {
+            // 1. 파이프라인 정지
+            if (g_preview_pipeline) {
                 gst_element_set_state(g_preview_pipeline, GST_STATE_NULL);
                 gst_object_unref(g_preview_pipeline);
                 g_preview_pipeline = nullptr;
             }
 
-            if (g_preview_bus)
-            {
-                gst_bus_set_sync_handler(g_preview_bus, nullptr, nullptr, nullptr);
-                gst_object_unref(g_preview_bus);
-                g_preview_bus = nullptr;
+            // 2. 윈도우 스레드 종료
+            if (g_window_thread.joinable()) {
+                g_stop_window_thread.store(true);
+                // 메시지 루프 깨우기 (GetMessage 탈출)
+                HWND hwnd = g_child_hwnd.load();
+                if (hwnd) PostMessage(hwnd, WM_NULL, 0, 0);
+                g_window_thread.join();
             }
-
-            g_preview_window = nullptr;
-        }
-
-        void ApplyOverlayHandle(GstElement* sink, HWND window)
-        {
-            if (!sink || !window)
-                return;
-
-            if (GST_IS_VIDEO_OVERLAY(sink))
-            {
-                gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(sink), (guintptr)window);
-            }
-        }
-
-        void UpdateOverlayGeometry(GstElement* sink, HWND window)
-        {
-            if (!sink || !window)
-                return;
-
-            if (!GST_IS_VIDEO_OVERLAY(sink))
-                return;
-
-            RECT rect{};
-            if (!GetClientRect(window, &rect))
-                return;
-
-            int width = rect.right - rect.left;
-            int height = rect.bottom - rect.top;
-            if (width <= 0 || height <= 0)
-                return;
-
-            gst_video_overlay_set_render_rectangle(GST_VIDEO_OVERLAY(sink), 0, 0, width, height);
-            gst_video_overlay_expose(GST_VIDEO_OVERLAY(sink));
+            g_stop_window_thread.store(false);
+            g_child_hwnd.store(nullptr);
         }
     }
 
-    void Initialize()
-    {
+    void Initialize() {
         static bool initialized = false;
-        if (!initialized)
-        {
+        if (!initialized) {
             gst_init(nullptr, nullptr);
             initialized = true;
         }
     }
 
-    void Deinitialize()
-    {
+    void Deinitialize() {
         StopPreviewInternal();
         StopScreenCaptureRtspServer();
     }
 
-    bool StartPreview(const StreamConfigNative& config, HWND window)
+    // [추가] 외부에서 호출할 리사이즈 함수 (C# -> Main -> 여기)
+    void ResizePreview(int w, int h) {
+        HWND hwnd = g_child_hwnd.load();
+        if (hwnd) {
+            // SetWindowPos는 다른 스레드에서 호출해도 안전함 (OS가 메시지로 처리)
+            SetWindowPos(hwnd, NULL, 0, 0, w, h, SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
+        }
+    }
+
+    bool StartPreview(const StreamConfigNative& config, HWND parent_window)
     {
         StopPreviewInternal();
 
-        g_preview_window = window;
+        // 1. UI 스레드 시작 (C# 윈도우 안에 자식 윈도우 생성)
+        g_stop_window_thread.store(false);
+        g_window_thread = std::thread(WindowThreadFunc, parent_window);
 
+        // 윈도우가 생성될 때까지 잠시 대기
+        int retries = 50;
+        while (retries-- > 0 && g_child_hwnd.load() == nullptr) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+
+        HWND render_target = g_child_hwnd.load();
+        if (!render_target) {
+            g_print("[ERROR] Failed to create preview child window\n");
+            return false;
+        }
+
+        // 2. 파이프라인 생성
         GstElement* pipeline = gst_pipeline_new("screen-preview");
         GstElement* src = gst_element_factory_make("d3d11screencapturesrc", "src");
         GstElement* queue = gst_element_factory_make("queue", "queue");
@@ -114,66 +134,40 @@ namespace GStreamerWrapper
         GstElement* capsfilter = gst_element_factory_make("capsfilter", "caps");
         GstElement* sink = gst_element_factory_make("d3d11videosink", "sink");
 
-        if (!pipeline || !src || !queue || !conv || !capsfilter || !sink)
-        {
-            StopPreviewInternal();
+        if (!pipeline || !src || !queue || !conv || !capsfilter || !sink) {
+            if (pipeline) gst_object_unref(pipeline);
             return false;
         }
 
-        g_object_set(src,
-            "monitor-index", config.monitor_index,
-            "show-cursor", TRUE,
-            "capture-api", 1,
-            NULL);
+        g_object_set(src, "monitor-index", config.monitor_index, "show-cursor", TRUE, NULL);
+
+        // [중요] 자식 윈도우에 꽉 차게 그리기 위해 force-aspect-ratio 끔
         g_object_set(sink, "force-aspect-ratio", FALSE, NULL);
 
         std::ostringstream caps_str;
         caps_str << "video/x-raw(memory:D3D11Memory),format=NV12,framerate="
-                 << (config.framerate > 0 ? config.framerate : 30) << "/1";
+            << (config.framerate > 0 ? config.framerate : 30) << "/1";
         GstCaps* caps = gst_caps_from_string(caps_str.str().c_str());
         g_object_set(capsfilter, "caps", caps, NULL);
         gst_caps_unref(caps);
 
         gst_bin_add_many(GST_BIN(pipeline), src, queue, conv, capsfilter, sink, NULL);
-        if (!gst_element_link_many(src, queue, conv, capsfilter, sink, NULL))
-        {
+        if (!gst_element_link_many(src, queue, conv, capsfilter, sink, NULL)) {
             gst_object_unref(pipeline);
             return false;
         }
 
-        g_preview_pipeline = pipeline;
-        g_preview_bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
-        gst_bus_set_sync_handler(g_preview_bus, PreviewBusSyncHandler, g_preview_window, nullptr);
+        // 3. 오버레이 설정 (우리가 만든 자식 윈도우 핸들 사용)
+        GstVideoOverlay* overlay = GST_VIDEO_OVERLAY(sink);
+        gst_video_overlay_set_window_handle(overlay, (guintptr)render_target);
 
-        ApplyOverlayHandle(sink, window);
-        UpdateOverlayGeometry(sink, window);
+        g_preview_pipeline = pipeline;
         gst_element_set_state(pipeline, GST_STATE_PLAYING);
+
         return true;
     }
 
-    void StopPreview()
-    {
+    void StopPreview() {
         StopPreviewInternal();
     }
-
-    bool RefreshPreviewOverlay(HWND window)
-    {
-        if (!window)
-            window = g_preview_window;
-
-        if (!g_preview_pipeline || !window)
-            return false;
-
-        g_preview_window = window;
-
-        GstElement* sink = gst_bin_get_by_name(GST_BIN(g_preview_pipeline), "sink");
-        if (!sink)
-            return false;
-
-        ApplyOverlayHandle(sink, window);
-        UpdateOverlayGeometry(sink, window);
-        gst_object_unref(sink);
-        return true;
-    }
 }
-

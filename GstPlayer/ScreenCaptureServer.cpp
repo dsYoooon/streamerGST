@@ -308,7 +308,7 @@ namespace GStreamerWrapper {
             gst_rtsp_client_close(client);
             return;
         }
-        gst_debug_set_default_threshold(GST_LEVEL_INFO);
+        //gst_debug_set_default_threshold(GST_LEVEL_INFO);
         GstRTSPConnection *c = gst_rtsp_client_get_connection(client);
         if (c)
         {

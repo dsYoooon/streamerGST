@@ -11,6 +11,7 @@ namespace GStreamerDotNetTest
 {
     public partial class MainWindow : Window
     {
+        const int defaultResIndex = 3; // 0: Input, 1: 1080p, 2: 720p, 3: 540p
         private GstProcessManager _gstProcessManager;
         private GstVideoHost _videoHost;
         private StreamConfig[] _configs = new StreamConfig[0];
@@ -89,7 +90,8 @@ namespace GStreamerDotNetTest
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             _videoHost = new GstVideoHost();
-            _videoHost.HwndResized += (s, _) => _gstProcessManager?.SendUpdatePreviewRectangle(_videoHost.Handle);
+            // [수정] 윈도우 크기가 변하면 C++ 프로세스에게 알려줌
+            _videoHost.WindowResized += (w, h) => _gstProcessManager?.SendResize(w, h);
             videoContainer.Child = _videoHost;
 
             string exePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "GstServer.exe");
@@ -156,6 +158,7 @@ namespace GStreamerDotNetTest
                         BitrateControl = "CBR",
                         Profile = "high",
                         OsdText = $"Screen {i + 1}",
+                        StreamIndex = i+1,
                         MultiCastIP = string.Empty,
                         MultiCastInterface = (_networkInterfaceNames.Length > 0) ? _networkInterfaceNames[6] : string.Empty
                     };
@@ -184,6 +187,7 @@ namespace GStreamerDotNetTest
                         EnableMultiCast = true,
                         Profile = "baseline",
                         OsdText = $"Screen {i + 1}",
+                        StreamIndex = i + 1,
                         MultiCastIP = string.Empty,
                         MultiCastInterface = (_networkInterfaceNames.Length > 0) ? _networkInterfaceNames[6] : string.Empty
                     };
@@ -220,6 +224,7 @@ namespace GStreamerDotNetTest
         {
             var list = new List<StreamConfig>();
             int idx = 0;
+
             foreach (var s in _streamSettings)
             {
                 var cfg = new StreamConfig();
@@ -264,6 +269,7 @@ namespace GStreamerDotNetTest
                     string res = s.Resolution.SelectedItem as string;
                     if (res == "1080p") { cfg.Width = 1920; cfg.Height = 1080; }
                     else if (res == "720p") { cfg.Width = 1280; cfg.Height = 720; }
+                    else if (res == "540p") { cfg.Width = 960; cfg.Height = 540; }
                     else { cfg.Width = 0; cfg.Height = 0; }
                 }
 
@@ -275,6 +281,7 @@ namespace GStreamerDotNetTest
                 cfg.BitrateKbps = br;
                 cfg.KeyframeInterval = ki;
                 cfg.Port = 10554 + idx++;
+                cfg.StreamIndex = idx;
                 cfg.BitrateControl = s.BitrateControl.SelectedItem as string;
                 cfg.Profile = s.Profile.SelectedItem as string;
 
@@ -437,8 +444,9 @@ namespace GStreamerDotNetTest
             setting.Resolution.Items.Add("Input");
             setting.Resolution.Items.Add("1080p");
             setting.Resolution.Items.Add("720p");
-            setting.Resolution.SelectedIndex = 0;
-            setting.UseInputResolution = true;
+            setting.Resolution.Items.Add("540p");
+            setting.Resolution.SelectedIndex = defaultResIndex;
+            setting.UseInputResolution = false;
             setting.Resolution.SelectionChanged += (s, e) =>
             {
                 var sel = setting.Resolution.SelectedItem as string;

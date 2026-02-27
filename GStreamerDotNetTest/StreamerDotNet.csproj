@@ -218,12 +218,6 @@
       <Install>false</Install>
     </BootstrapperPackage>
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\GstPlayer\GstPlayer.vcxproj">
-      <Project>{23a886bb-2116-481a-b264-fd878c21fca0}</Project>
-      <Name>StreamerGstWrapper</Name>
-    </ProjectReference>
-  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <PropertyGroup>
     <PostBuildEvent>
