@@ -18,7 +18,8 @@
 #include <atomic>
 #include <mmdeviceapi.h>
 #include <functiondiscoverykeys_devpkey.h>
-
+#include <gst/app/gstappsink.h>
+#include <gst/app/gstappsrc.h>
 #include "ScreenCaptureServer.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -28,7 +29,53 @@ namespace GStreamerWrapper {
 
     static std::string g_server_ip;
     static std::vector<StreamConfigNative> g_configs;
+    // =========================================================
+    // [추가] Shared Master Pipeline 관련 전역 변수
+    // =========================================================
+    struct MasterPipelineContext {
+        GstElement* pipeline = nullptr;
+        GstElement* appsink = nullptr;
+        std::mutex appsrc_mutex;
+        std::vector<GstElement*> active_appsrcs;
+        bool is_active = false;
+    };
+    static MasterPipelineContext g_master_ctx;
 
+    // =========================================================
+    // [추가] Master Pipeline의 AppSink 콜백 (데이터 펌핑)
+    // =========================================================
+    static GstFlowReturn on_master_new_sample(GstElement* sink, gpointer user_data) {
+        GstSample* sample = gst_app_sink_pull_sample(GST_APP_SINK(sink));
+        if (!sample) return GST_FLOW_OK;
+
+        GstBuffer* buffer = gst_sample_get_buffer(sample);
+        if (!buffer) {
+            gst_sample_unref(sample);
+            return GST_FLOW_OK;
+        }
+
+        // [핵심 변경 포인트] 
+        // 마스터 파이프라인과 RTSP 세션 파이프라인의 Clock이 다르기 때문에 
+        // 타임스탬프가 맞지 않아 rtph264pay가 버퍼를 드랍(drop)할 수 있습니다.
+        // 타임스탬프를 복사본에서 수정 가능하도록 버퍼를 얕은 복사(Make Writable)합니다.
+        GstBuffer* writable_buffer = gst_buffer_make_writable(gst_buffer_ref(buffer));
+
+        // 타임스탬프를 무효화하여, 각 RTSP 세션의 payloader가 스스로 현재 시간에 맞게 타임스탬프를 찍도록 유도합니다.
+        GST_BUFFER_PTS(writable_buffer) = GST_CLOCK_TIME_NONE;
+        GST_BUFFER_DTS(writable_buffer) = GST_CLOCK_TIME_NONE;
+
+        {
+            std::lock_guard<std::mutex> lock(g_master_ctx.appsrc_mutex);
+            for (GstElement* src : g_master_ctx.active_appsrcs) {
+                // 각 appsrc마다 버퍼의 레퍼런스를 증가시켜 푸시
+                gst_app_src_push_buffer(GST_APP_SRC(src), gst_buffer_ref(writable_buffer));
+            }
+        }
+
+        gst_buffer_unref(writable_buffer); // make_writable에서 생성된 기준 참조 해제
+        gst_sample_unref(sample);
+        return GST_FLOW_OK;
+    }
     /* ---------- RTSP context: multiple servers (one per stream) ---------- */
     struct ServerEntry {
         GstRTSPServer* server = NULL;
@@ -361,6 +408,28 @@ namespace GStreamerWrapper {
 
     static gboolean my_rtsp_media_unprepare(GstRTSPMedia* media) {
         std::unique_lock<std::mutex> lock(pipeline_build_mutex());
+
+        // [추가] 마스터 모드일 경우 전역 목록에서 AppSrc 제거
+        if (g_master_ctx.is_active) {
+            GstElement* elem = gst_rtsp_media_get_element(media);
+            if (elem) {
+                GstElement* appsrc = gst_bin_get_by_name(GST_BIN(elem), "shared_src");
+                if (appsrc) {
+                    std::lock_guard<std::mutex> alock(g_master_ctx.appsrc_mutex);
+                    for (auto it = g_master_ctx.active_appsrcs.begin(); it != g_master_ctx.active_appsrcs.end(); ) {
+                        if (*it == appsrc) {
+                            it = g_master_ctx.active_appsrcs.erase(it);
+                        }
+                        else {
+                            ++it;
+                        }
+                    }
+                    gst_object_unref(appsrc);
+                }
+                gst_object_unref(elem);
+            }
+        }
+
         GstRTSPMediaClass* parent_class = GST_RTSP_MEDIA_CLASS(my_rtsp_media_parent_class);
         if (parent_class->unprepare) {
             return parent_class->unprepare(media);
@@ -547,12 +616,63 @@ namespace GStreamerWrapper {
     static GstElement* my_media_factory_create_element(GstRTSPMediaFactory* factory, const GstRTSPUrl*) {
         MyMediaFactory* self = (MyMediaFactory*)factory;
 
+        // [추가] Shared Master 모드일 경우: 초경량 AppSrc 파이프라인 리턴
+        if (g_master_ctx.is_active) {
+            GstElement* bin = gst_bin_new(NULL);
+
+            GstElement* appsrc = gst_element_factory_make("appsrc", "shared_src");
+            // [수정] 테스트 코드와 동일한 Caps 및 설정 적용
+            GstCaps* caps = gst_caps_from_string("video/x-h264,stream-format=byte-stream,alignment=au,profile=high");
+            g_object_set(appsrc,
+                "is-live", TRUE,
+                "format", GST_FORMAT_TIME,
+                "caps", caps,
+                "emit-signals", FALSE,
+                "block", FALSE,
+                "max-bytes", (guint64)(2 * 1024 * 1024),
+                "do-timestamp", TRUE, // [핵심] AppSrc 자체적으로 타임스탬프 생성
+                NULL);
+            gst_caps_unref(caps);
+
+            // [수정] config-interval을 1로 유지하여 SPS/PPS를 주기적으로 전송
+            GstElement* vpay = gst_element_factory_make("rtph264pay", "pay0");
+            g_object_set(vpay, "pt", 96, "config-interval", 1, "mtu", 1200, NULL);
+
+            if (!appsrc || !vpay) {
+                g_printerr("AppSrc 기반 파이프라인 생성 실패\n");
+                if (bin) gst_object_unref(bin);
+                return NULL;
+            }
+
+            gst_bin_add_many(GST_BIN(bin), appsrc, vpay, NULL);
+            if (!gst_element_link(appsrc, vpay)) {
+                g_printerr("AppSrc -> rtp payload 링크 실패\n");
+                gst_object_unref(bin);
+                return NULL;
+            }
+
+            // 생성된 appsrc를 전역 리스트에 등록하여 마스터로부터 데이터를 받을 수 있게 함
+            {
+                std::lock_guard<std::mutex> lock(g_master_ctx.appsrc_mutex);
+                g_master_ctx.active_appsrcs.push_back(appsrc);
+            }
+
+            return bin;
+        }
+
+        // ===================================================================
+        // 이하는 기존의 개별 파이프라인 구축 로직 (마스터 모드가 아닐 때 실행)
+        // ... (이후 코드는 원본과 동일하게 유지) ...
+
+        // ===================================================================
+        // 이하는 기존의 개별 파이프라인 구축 로직 (마스터 모드가 아닐 때 실행)
+        // ===================================================================
         const gint monitor_index = self->monitor_index;
         const gint crop_x = self->crop_x, crop_y = self->crop_y, crop_w = self->crop_w, crop_h = self->crop_h;
         const gint out_w = (self->out_w & ~1), out_h = (self->out_h & ~1), fps = self->fps;
         const gint a_bps = self->a_bitrate_bps;
         const gint keyint = self->keyint > 0 ? self->keyint : fps;
-        g_print("moniidx: %d %d, fps: %d, a_bps: %d, keyint: %d", self->monitor_index, monitor_index,  self->fps, self->a_bitrate_bps, self->keyint);
+        g_print("moniidx: %d %d, fps: %d, a_bps: %d, keyint: %d", self->monitor_index, monitor_index, self->fps, self->a_bitrate_bps, self->keyint);
         g_print("[video] HW accel option: %s\n", self->enable_hw_accel ? "ON" : "OFF");
 
         GstElement* bin = gst_bin_new(NULL);
@@ -588,24 +708,22 @@ namespace GStreamerWrapper {
         const gboolean try_hw_zero_copy = self->enable_hw_accel && (!nv_system || vdupload != NULL);
 
         // 인코더: HW on → encodebin, HW off → x264enc
-        
         GstElement* venc;
         if (self->enable_hw_accel) {
             if (nv_system) {
-
-                // NVIDIA: encodebin 대신 nvh264enc 직접 사용 (encodebin이 nvh264enc를 잘 선택하지 못함)
+                // NVIDIA: encodebin 대신 nvh264enc 직접 사용
                 venc = gst_element_factory_make("nvh264enc", "venc");
                 g_print("[video] NVIDIA 시스템 + HW 가속 옵션 → nvh264enc 직접 사용\n");
             }
             else
             {
                 venc = gst_element_factory_make("encodebin", "vencbin");
+                g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
             }
-		}
+        }
         else {
             venc = gst_element_factory_make("x264enc", "venc");
         }
-        g_signal_connect(venc, "element-added", G_CALLBACK(on_encodebin_element_added), self);
 
         GstElement* vparse = gst_element_factory_make("h264parse", "vparse");
         GstElement* vcf = gst_element_factory_make("capsfilter", "vpaycaps");
@@ -622,19 +740,19 @@ namespace GStreamerWrapper {
         if (self->enable_osd)
             gst_bin_add_many(GST_BIN(bin), vsrc, vd3d, tover, vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
         else
-            gst_bin_add_many(GST_BIN(bin), vsrc, /*vd3d X*/ /*tover X*/ vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
+            gst_bin_add_many(GST_BIN(bin), vsrc, vd3d2, vdown, vconv, vq1, venc, vparse, vcf, vq2, vpay, NULL);
 
         if (vdupload)
             gst_bin_add(GST_BIN(bin), vdupload);
         if (vd12convert)
             gst_bin_add(GST_BIN(bin), vd12convert);
-        int crop_width = crop_w;// == out_w ? 0 : crop_w;
-        int crop_height = crop_h;// == out_h ? 0 : crop_h;
+
+        int crop_width = crop_w;
+        int crop_height = crop_h;
         // 캡처 기본 설정
         g_object_set(vsrc,
             "monitor-index", monitor_index, "show-cursor", TRUE,
-            "crop-x", crop_x, "crop-y", crop_y, "crop-width", crop_width, "crop-height", crop_height,
-            //"capture-api",1,
+            "crop-x", crop_x, "crop-y", crop_y, "crop-width", 960, "crop-height", 540,
             NULL);
 
         // 1) OSD 경로: BGRA로 변환 후 overlay
@@ -642,7 +760,6 @@ namespace GStreamerWrapper {
         if (self->enable_osd) {
             std::ostringstream css;
             css << "video/x-raw(memory:D3D11Memory),format=BGRA,"
-                //<< "width=" << out_w << ",height=" << out_h
                 << "framerate=" << fps << "/1,pixel-aspect-ratio=1/1";
             if (!link_ok(vsrc, vd3d, gst_caps_from_string(css.str().c_str()))) { gst_object_unref(bin); return NULL; }
 
@@ -650,7 +767,7 @@ namespace GStreamerWrapper {
             g_object_set(tover,
                 "text", txt,
                 "font-family", "Segoe UI",
-                "font-size", 20.0,     // gdouble
+                "font-size", 20.0,
                 "layout-x", 0.03 + crop_x, "layout-y", 0.03 + crop_y, "layout-width", 0.94, "layout-height", 0.94,
                 "text-alignment", 0, "paragraph-alignment", 0,
                 "foreground-color", 0xFFFFFFFFu, "background-color", 0x00000000u,
@@ -666,7 +783,6 @@ namespace GStreamerWrapper {
         // (공통) prev → vd3d2 에서 NV12로 1회 변환
         if (!link_ok(prev, vd3d2)) { gst_object_unref(bin); return NULL; }
 
-        // 제로카피용 D3D11Memory NV12 caps
         GstCaps* gpu_nv12_caps = gst_caps_new_simple("video/x-raw",
             "format", G_TYPE_STRING, "NV12",
             "width", G_TYPE_INT, out_w,
@@ -676,60 +792,47 @@ namespace GStreamerWrapper {
         gst_caps_set_features(gpu_nv12_caps, 0, gst_caps_features_new("memory:D3D11Memory", NULL));
 
         gboolean zero_copy_ok = FALSE;
-
-        // 안정성: HW 가속 시에도 파서 사용 (AU 정렬/헤더 보장)
         const gboolean NO_PARSE_HW = FALSE;
-
-        // HW 가속이면: encodebin + 제로카피 우선 시도
         gboolean attempted_zero_copy = FALSE;
+
         if (try_hw_zero_copy) {
             attempted_zero_copy = TRUE;
             std::ostringstream pcaps;
             pcaps << "video/x-h264,profile=" << (self->profile ? self->profile : "high");
             GstCaps* h264_caps = gst_caps_from_string(pcaps.str().c_str());
-            GstCaps* restr = gst_caps_copy(gpu_nv12_caps); // NV12 + D3D11Memory
+            GstCaps* restr = gst_caps_copy(gpu_nv12_caps);
             GstEncodingProfile* vprof = (GstEncodingProfile*)
                 gst_encoding_video_profile_new(h264_caps, NULL, restr, 1);
+
             if (nv_system)
             {
-                const gchar *rc = self->bitrate_control ? self->bitrate_control : "CBR";
-                const gchar *rc_nick = (g_ascii_strcasecmp(rc, "VBR") == 0) ? "vbr" : "cbr";
-                g_object_set(venc, 
-                "bitrate", self->v_bitrate_kbps,
-                 "key-int-max", self->keyint,
-                "gop-size", self->keyint,
-                "rc-mode", rc_nick,
-                 NULL);
-
-
-                
+                const gchar* rc = self->bitrate_control ? self->bitrate_control : "CBR";
+                const gchar* rc_nick = (g_ascii_strcasecmp(rc, "VBR") == 0) ? "vbr" : "cbr";
+                g_object_set(venc,
+                    "bitrate", self->v_bitrate_kbps,
+                    "key-int-max", self->keyint,
+                    "gop-size", self->keyint,
+                    "rc-mode", rc_nick,
+                    NULL);
             }
             else
             {
                 g_object_set(venc, "profile", vprof, NULL);
             }
-
-            
             gst_encoding_profile_unref(vprof);
             gst_caps_unref(h264_caps);
 
-            // encodebin 내부로 선택된 실제 인코더 튜닝
-            
-
-            // ★ 제로카피 경로: vd3d2 -> vq1 (D3D11 NV12) -> encodebin
             if (link_ok(vd3d2, vq1, gst_caps_ref(gpu_nv12_caps)) &&
                 link_queue_to_encoder(vq1, vdupload, vd12convert, venc)) {
                 zero_copy_ok = TRUE;
-                //g_print("[video] Zero-copy D3D11Memory→%sencodebin 활성화\n", vdupload ? (vd12convert ? "d3d12upload→d3d12convert→" : "d3d12upload→") : "");
             }
             else {
                 gst_element_unlink(vd3d2, vq1);
             }
         }
 
-        // CPU 폴백 경로 (HW off이거나 zero-copy 실패 시)
+        // CPU 폴백 경로
         if (!try_hw_zero_copy || !zero_copy_ok) {
-            // vd3d2 → vdown(D3D11 NV12) → vconv(CPU NV12) → vq1
             {
                 std::ostringstream gpu_css;
                 gpu_css << "video/x-raw(memory:D3D11Memory),format=NV12,"
@@ -750,13 +853,12 @@ namespace GStreamerWrapper {
                 if (!link_queue_to_encoder(vq1, vdupload, vd12convert, venc)) { gst_object_unref(bin); return NULL; }
             }
             else {
-                // 소프트웨어 x264enc 세팅
                 g_object_set(venc,
-                    "bitrate", self->v_bitrate_kbps,     // x264: kbps
+                    "bitrate", self->v_bitrate_kbps,
                     "key-int-max", keyint,
                     "gop-size", keyint,
-                    "speed-preset", 1 /*ultrafast*/,
-                    "tune", 0x00000004 /*zerolatency*/,
+                    "speed-preset", 1,
+                    "tune", 0x00000004,
                     "byte-stream", TRUE,
                     NULL);
                 set_str_or_enum_if(G_OBJECT(venc), "profile", self->profile ? self->profile : "high");
@@ -764,17 +866,11 @@ namespace GStreamerWrapper {
             }
         }
 
-        if (attempted_zero_copy && !zero_copy_ok) {
-            g_print("[video] Zero-copy 링크 실패 → CPU 폴백으로 전환\n");
-        }
-
-        // 파서 경로 (기본)
         gboolean linked_after_enc = FALSE;
         g_object_set(vparse, "config-interval", 1, NULL);
         if (self->enable_hw_accel && NO_PARSE_HW) {
             if (link_ok(venc, vcf)) {
                 linked_after_enc = TRUE;
-                g_print("[video] h264parse 생략 경로 사용\n");
             }
         }
         if (!linked_after_enc) {
@@ -782,7 +878,6 @@ namespace GStreamerWrapper {
             if (!link_ok(vparse, vcf)) { gst_object_unref(bin); return NULL; }
         }
 
-        // RTP caps & queues
         {
             std::ostringstream paystr;
             paystr << "video/x-h264,stream-format=byte-stream,alignment=au,profile=(string)"
@@ -791,162 +886,62 @@ namespace GStreamerWrapper {
             g_object_set(vcf, "caps", paycaps, NULL);
             gst_caps_unref(paycaps);
         }
-        // queue 튜닝: 얕되 약간의 여유
-        g_object_set(vq1, "leaky", 2, "max-size-buffers", 15, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
-        g_object_set(vq2, "leaky", 2, "max-size-buffers", 8, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
-
-        // MTU 1200 (조각화 회피)
+        g_object_set(vq1, "leaky", 2, "max-size-buffers", 30, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
+        g_object_set(vq2, "leaky", 2, "max-size-buffers", 16, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
         g_object_set(vpay, "pt", 96, "config-interval", 1, "mtu", 1200, NULL);
 
         if (!link_ok(vcf, vq2)) { gst_object_unref(bin); return NULL; }
         if (!link_ok(vq2, vpay)) { gst_object_unref(bin); return NULL; }
 
         /* --- 오디오 (선택) --- */
-           /* --- 오디오 (선택) --- */
-        if (!HasActiveAudioEndpoint(eCapture) && !HasActiveAudioEndpoint(eRender)) self->enable_audio = false; // -> 오디오 체인 생성 금지
-         //if (!HasActiveAudioEndpoint(eRender)) self->enable_audio = false; // -> loopback 소스 생성 금지
+        if (!HasActiveAudioEndpoint(eCapture) && !HasActiveAudioEndpoint(eRender)) self->enable_audio = false;
         if (self->enable_audio)
         {
-            GstElement *asrc = gst_element_factory_make("wasapi2src", "asrc");
-            if (!asrc)
-                asrc = gst_element_factory_make("wasapisrc", "asrc"); // 폴백
+            GstElement* asrc = gst_element_factory_make("wasapi2src", "asrc");
+            if (!asrc) asrc = gst_element_factory_make("wasapisrc", "asrc");
 
-            GstElement *aq1 = gst_element_factory_make("queue", "aqueue1");
-            GstElement *aconv = gst_element_factory_make("audioconvert", NULL);
-            GstElement *ares = gst_element_factory_make("audioresample", NULL);
-            GstElement *acaps = gst_element_factory_make("capsfilter", "acaps");
-            GstElement *aq2 = gst_element_factory_make("queue", "aqueue2");
-
-            // 1차: AAC 인코더 + AAC RTP payloader 시도
-            GstElement *aenc = gst_element_factory_make("voaacenc", "aenc");
-            GstElement *apay = gst_element_factory_make("rtpmp4gpay", "pay1");
+            GstElement* aq1 = gst_element_factory_make("queue", "aqueue1");
+            GstElement* aconv = gst_element_factory_make("audioconvert", NULL);
+            GstElement* ares = gst_element_factory_make("audioresample", NULL);
+            GstElement* acaps = gst_element_factory_make("capsfilter", "acaps");
+            GstElement* aq2 = gst_element_factory_make("queue", "aqueue2");
+            GstElement* aenc = gst_element_factory_make("voaacenc", "aenc");
+            GstElement* apay = gst_element_factory_make("rtpmp4gpay", "pay1");
 
             gboolean use_aac = (aenc != NULL && apay != NULL);
-
-            if (!use_aac)
-            {
-                g_warning("AAC 인코더(avenc_aac) 또는 rtpmp4gpay 생성 실패 → Opus로 폴백합니다.");
-
-                if (aenc)
-                {
-                    gst_object_unref(aenc);  aenc = NULL;
-                }
-                if (apay)
-                {
-                    gst_object_unref(apay);  apay = NULL;
-                }
-
-// Opus + rtpopuspay (기존에 잘 되던 조합)
+            if (!use_aac) {
+                if (aenc) { gst_object_unref(aenc); aenc = NULL; }
+                if (apay) { gst_object_unref(apay); apay = NULL; }
                 aenc = gst_element_factory_make("opusenc", "aenc");
                 apay = gst_element_factory_make("rtpopuspay", "pay1");
-
-                if (aenc)
-                {
-                    g_object_set(aenc,
-                        "bitrate", self->a_bitrate_bps,
-                        "frame-size", 40,
-                        "inband-fec", TRUE,
-                        "packet-loss-percentage", 10,
-                        "complexity", 5,
-                        NULL);
+                if (aenc) {
+                    g_object_set(aenc, "bitrate", self->a_bitrate_bps, "frame-size", 40, "inband-fec", TRUE, "packet-loss-percentage", 10, "complexity", 5, NULL);
                 }
             }
 
-            if (!asrc || !aq1 || !aconv || !ares || !acaps || !aq2 || !aenc || !apay)
-            {
-                g_warning("오디오 요소 생성 실패 (asrc=%p, aenc=%p, apay=%p). 비디오만 스트리밍합니다.",
-                    asrc, aenc, apay);
+            if (!asrc || !aq1 || !aconv || !ares || !acaps || !aq2 || !aenc || !apay) {
+                g_warning("오디오 요소 생성 실패. 비디오만 스트리밍합니다.");
             }
-            else
-            {
-                gst_bin_add_many(GST_BIN(bin),
-                    asrc, aq1, aconv, ares, acaps, aq2, aenc, apay, NULL);
+            else {
+                gst_bin_add_many(GST_BIN(bin), asrc, aq1, aconv, ares, acaps, aq2, aenc, apay, NULL);
+                g_object_set(asrc, "loopback", TRUE, "do-timestamp", TRUE, "loopback-silence-on-device-mute", TRUE, NULL);
+                g_object_set(aq1, "leaky", 2, "max-size-buffers", 20, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
+                g_object_set(aq2, "leaky", 2, "max-size-buffers", 12, "max-size-bytes", 0, "max-size-time", (gint64)0, NULL);
 
-                g_object_set(asrc,
-                    "loopback", TRUE,
-                    "do-timestamp", TRUE,
-                    "loopback-silence-on-device-mute", TRUE,
-                    NULL);
-
-                g_object_set(aq1, "leaky", 2,
-                    "max-size-buffers", 20,
-                    "max-size-bytes", 0,
-                    "max-size-time", (gint64)0, NULL);
-                g_object_set(aq2, "leaky", 2,
-                    "max-size-buffers", 12,
-                    "max-size-bytes", 0,
-                    "max-size-time", (gint64)0, NULL);
-
-       // wasapi2src → raw audio caps
-                GstCaps *a_caps = gst_caps_new_simple("audio/x-raw",
-                    "format", G_TYPE_STRING, "S16LE",
-                    "rate", G_TYPE_INT, 48000,
-                    "channels", G_TYPE_INT, 2,
-                    NULL);
+                GstCaps* a_caps = gst_caps_new_simple("audio/x-raw", "format", G_TYPE_STRING, "S16LE", "rate", G_TYPE_INT, 48000, "channels", G_TYPE_INT, 2, NULL);
                 g_object_set(acaps, "caps", a_caps, NULL);
                 gst_caps_unref(a_caps);
 
-                if (use_aac)
-                {
-      // AAC 인코더 설정 (bits per second)
-                    g_object_set(aenc,
-                        "bitrate", self->a_bitrate_bps,
-                        NULL);
-
-                    // 필요하면 여기 사이에 aacparse 추가 가능:
-                    // GstElement* aparse = gst_element_factory_make("aacparse", "aparse");
-                    // gst_bin_add(GST_BIN(bin), aparse);
-                    // 그리고 아래 링크 순서를 조정 (aq2 -> aenc -> aparse -> apay)
+                if (use_aac) {
+                    g_object_set(aenc, "bitrate", self->a_bitrate_bps, NULL);
                 }
-
                 g_object_set(apay, "pt", 97, NULL);
 
-                // ---- 링크를 한 단계씩 체크해서 어디서 깨지는지 찍어줌 ----
-                gboolean ok = TRUE;
-
-                if (!gst_element_link(asrc, aq1))
-                {
-                    g_warning("오디오 링크 실패: asrc -> aqueue1");
-                    ok = FALSE;
-                }
-                if (ok && !gst_element_link(aq1, aconv))
-                {
-                    g_warning("오디오 링크 실패: aqueue1 -> audioconvert");
-                    ok = FALSE;
-                }
-                if (ok && !gst_element_link(aconv, ares))
-                {
-                    g_warning("오디오 링크 실패: audioconvert -> audioresample");
-                    ok = FALSE;
-                }
-                if (ok && !gst_element_link(ares, acaps))
-                {
-                    g_warning("오디오 링크 실패: audioresample -> acaps");
-                    ok = FALSE;
-                }
-                if (ok && !gst_element_link(acaps, aq2))
-                {
-                    g_warning("오디오 링크 실패: acaps -> aqueue2");
-                    ok = FALSE;
-                }
-                if (ok && !gst_element_link(aq2, aenc))
-                {
-                    g_warning("오디오 링크 실패: aqueue2 -> aenc");
-                    ok = FALSE;
-                }
-                if (ok && !gst_element_link(aenc, apay))
-                {
-                    g_warning("오디오 링크 실패: aenc -> apay (인코더 출력→RTP payloader)");
-                    ok = FALSE;
-                }
-
-                if (!ok)
-                {
-                    g_warning("오디오 파이프라인 링크 실패 → asrc가 not-linked로 떨어질 수 있습니다. 비디오만 스트리밍합니다.");
+                if (!gst_element_link_many(asrc, aq1, aconv, ares, acaps, aq2, aenc, apay, NULL)) {
+                    g_warning("오디오 파이프라인 링크 실패. 비디오만 스트리밍합니다.");
                 }
             }
         }
-
 
         if (gpu_nv12_caps) gst_caps_unref(gpu_nv12_caps);
         return bin;
@@ -1429,7 +1424,7 @@ namespace GStreamerWrapper {
         }
         else {
             gst_rtsp_media_factory_set_protocols(GST_RTSP_MEDIA_FACTORY(f),
-                (GstRTSPLowerTrans)(GST_RTSP_LOWER_TRANS_UDP));// | GST_RTSP_LOWER_TRANS_TCP));
+                (GstRTSPLowerTrans)(GST_RTSP_LOWER_TRANS_UDP| GST_RTSP_LOWER_TRANS_TCP));
 
         }
       
@@ -1585,13 +1580,84 @@ namespace GStreamerWrapper {
     }
 
     static bool start_rtsp_server(RtspServerContext* ctx) {
-
-            // [추가] 시작 직후 게이트 닫기
+        // 시작 직후 게이트 닫기
         ctx->accept_enabled.store(false, std::memory_order_release);
-
-        // [추가] 300ms 뒤 게이트 오픈 (200~500ms 중간값 추천)
+        // 500ms 뒤 게이트 오픈
         g_timeout_add(500, enable_accept_gate_cb, ctx);
-		int cnt = 0;
+        // =========================================================
+                // [수정] 16개 초과 시 Shared Master Pipeline 구축 및 시작
+                // =========================================================
+        if (g_configs.size() > 16) {
+            g_print(">>> [스트림 개수 %zu개] Shared Master Pipeline 모드 활성화 시도\n", g_configs.size());
+            g_master_ctx.is_active = true;
+
+            // [핵심 변경] 시스템 메모리로 다운로드(d3d11download)를 명시적으로 거치게 하여 
+            // 어떤 인코더(x264enc, qsvh264enc 등)가 붙든 호환성 문제가 없도록 안전한 파이프라인을 구축합니다.
+            // 또는 시스템 환경에 따라 qsvh264enc를 하드코딩하셔도 됩니다.
+            //std::string pipe_desc =
+            //    "d3d11screencapturesrc monitor-index=0 show-cursor=true ! "
+            //    "video/x-raw(memory:D3D11Memory),framerate=30/1 ! "
+            //    "d3d11convert ! " // 여기서 크기 변환(Scaling)과 포맷 변환을 동시에 수행
+            //    // [핵심 추가] width=960, height=540 을 강제하여 540p로 리사이징
+            //    "video/x-raw(memory:D3D11Memory),format=NV12,width=640,height=480 ! "
+            //    "d3d11download ! "  
+            //    "video/x-raw,format=NV12 ! "
+            //    // 540p 해상도이므로 비트레이트를 3000 -> 1000~1500 수준으로 낮춰도 화질이 충분하며 클라이언트 부하가 크게 줄어듭니다.
+            //    "qsvh264enc bitrate=2500 target-usage=4 ! "
+            //    "h264parse config-interval=1 ! "
+            //    "video/x-h264,stream-format=byte-stream,alignment=au ! "
+            //    "appsink name=master_sink emit-signals=true sync=false drop=true max-buffers=10";
+            //std::string pipe_desc =
+            //    "d3d11screencapturesrc monitor-index=0 show-cursor=true ! "
+            //    "video/x-raw(memory:D3D11Memory),framerate=60/1 ! "
+            //    "d3d11convert ! "
+            //    //"video/x-raw(memory:D3D11Memory),format=NV12,width=640,height=480 ! "
+            //    "video/x-raw(memory:D3D11Memory),format=NV12,width=3840,height=2160 ! "
+            //    "d3d11download ! "
+            //    "video/x-raw,format=NV12 ! "
+            //    //"qsvh264enc bitrate=2000 target-usage=7 ! "
+            //    "nvh264enc bitrate=20000 target-usage=7 ! "
+            //    "h264parse config-interval=1 ! "
+            //    "video/x-h264,stream-format=byte-stream,alignment=au ! "
+            //    "appsink name=master_sink emit-signals=true sync=false drop=true max-buffers=10";
+            std::string pipe_desc =
+                "d3d11screencapturesrc monitor-index=0 show-cursor=true ! "
+                "video/x-raw(memory:D3D11Memory),framerate=60/1 ! "
+                "d3d11convert ! "
+                "video/x-raw(memory:D3D11Memory),format=NV12,width=3840,height=2160 ! "
+                "d3d11download ! "
+                "video/x-raw,format=NV12 ! "
+                "nvh264enc bitrate=20000 preset=p1 ! " // <-- 이 부분을 수정했습니다.
+                "h264parse config-interval=1 ! "
+                "video/x-h264,stream-format=byte-stream,alignment=au ! "
+                "appsink name=master_sink emit-signals=true sync=false drop=true max-buffers=10";
+
+            GError* err = nullptr;
+            g_master_ctx.pipeline = gst_parse_launch(pipe_desc.c_str(), &err);
+
+            if (err) {
+                g_printerr(">>> Shared Master Pipeline fail create: %s\n", err->message);
+                g_error_free(err);
+                g_master_ctx.is_active = false; // 마스터가 죽었으므로 기존 방식으로 돌아감
+            }
+            else {
+                g_master_ctx.appsink = gst_bin_get_by_name(GST_BIN(g_master_ctx.pipeline), "master_sink");
+                g_signal_connect(g_master_ctx.appsink, "new-sample", G_CALLBACK(on_master_new_sample), NULL);
+
+                GstStateChangeReturn ret = gst_element_set_state(g_master_ctx.pipeline, GST_STATE_PLAYING);
+                if (ret == GST_STATE_CHANGE_FAILURE) {
+                    g_printerr(">>> Shared Master Pipeline state (PLAYING) fail\n");
+                    g_master_ctx.is_active = false;
+                }
+                else {
+                    g_print(">>> Shared Master Pipeline suc\n");
+                }
+            }
+        }
+
+        // =========================================================
+
+        int cnt = 1;
         // 모든 서버를 공유 GLib 컨텍스트에 attach
         for (auto& se : ctx->servers) {
             se.source_id = gst_rtsp_server_attach(se.server, ctx->main_ctx);
@@ -1599,24 +1665,20 @@ namespace GStreamerWrapper {
                 g_printerr("RTSP 서버 attach 실패 (port=%d)\n", se.service_port);
                 return false;
             }
-
-            g_print("RTSP serverstart: rtsp://%s:%d/screen%d\n",
-                g_server_ip.c_str(), se.service_port, cnt++);
+            g_print("RTSP serverstart: rtsp://%s:%d/screen%d\n", g_server_ip.c_str(), se.service_port, cnt++);
         }
 
         for (auto& mc : ctx->multicast_streams) {
             if (!mc.pipeline) continue;
             GstStateChangeReturn ret = gst_element_set_state(mc.pipeline, GST_STATE_PLAYING);
             if (ret == GST_STATE_CHANGE_FAILURE) {
-                g_printerr("멀티캐스트 파이프라인 시작 실패 (udp://%s:%d)\n",
-                    mc.multicast_ip.c_str(), mc.video_port);
+                g_printerr("멀티캐스트 파이프라인 시작 실패 (udp://%s:%d)\n", mc.multicast_ip.c_str(), mc.video_port);
             }
             else {
-                g_print("멀티캐스트 스트리밍 시작: udp://%s:%d%s\n",
-                    mc.multicast_ip.c_str(), mc.video_port,
-                    mc.audio_port > 0 ? " (audio)" : "");
+                g_print("멀티캐스트 스트리밍 시작: udp://%s:%d%s\n", mc.multicast_ip.c_str(), mc.video_port, mc.audio_port > 0 ? " (audio)" : "");
             }
         }
+
         ctx->session_cleanup_id = g_timeout_add_seconds(10, periodic_session_cleanup, ctx);
         g_main_loop_run(ctx->loop);
         return true;
@@ -1628,6 +1690,21 @@ namespace GStreamerWrapper {
             g_source_remove(ctx->session_cleanup_id);
             ctx->session_cleanup_id = 0;
         }
+
+        // [추가] 마스터 파이프라인 종료 및 해제
+        if (g_master_ctx.is_active) {
+            if (g_master_ctx.pipeline) {
+                gst_element_set_state(g_master_ctx.pipeline, GST_STATE_NULL);
+                gst_object_unref(g_master_ctx.pipeline);
+                g_master_ctx.pipeline = nullptr;
+                g_master_ctx.appsink = nullptr;
+            }
+            std::lock_guard<std::mutex> lock(g_master_ctx.appsrc_mutex);
+            g_master_ctx.active_appsrcs.clear();
+            g_master_ctx.is_active = false;
+            g_print(">>> Shared Master Pipeline 해제 완료\n");
+        }
+
         // detach
         for (auto& se : ctx->servers) {
             if (se.source_id != 0) {
@@ -1663,7 +1740,6 @@ namespace GStreamerWrapper {
         if (ctx->loop) { g_main_loop_unref(ctx->loop);      ctx->loop = NULL; }
         ctx->main_ctx = NULL;
     }
-
     /* ---------- API ---------- */
     void RunScreenCaptureRtspServer(const char* serverIp, const StreamConfigNative* configs, int count) {
         g_configs.clear();

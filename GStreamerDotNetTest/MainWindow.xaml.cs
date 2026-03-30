@@ -85,8 +85,9 @@ namespace GStreamerDotNetTest
         public MainWindow()
         {
             InitializeComponent();
+            Textbox_serverIP.Text = "192.168.10.252";
         }
-        const int defaultStreamCount = 2;
+        const int defaultStreamCount = 64;
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
             _videoHost = new GstVideoHost();
@@ -465,7 +466,7 @@ namespace GStreamerDotNetTest
             setting.FrameRate = new TextBox { Width = 60, Text = "30" };
             root.Children.Add(LabeledControl("Frame rate:", setting.FrameRate));
 
-            setting.Bitrate = new TextBox { Width = 80, Text = "4000" };
+            setting.Bitrate = new TextBox { Width = 80, Text = "2000" };
             root.Children.Add(LabeledControl("Bitrate (kbps):", setting.Bitrate));
 
             setting.BitrateControl = new ComboBox();
@@ -474,7 +475,7 @@ namespace GStreamerDotNetTest
             setting.BitrateControl.SelectedIndex = 0;
             root.Children.Add(LabeledControl("Bitrate Control:", setting.BitrateControl));
 
-            setting.Keyframe = new TextBox { Width = 60, Text = "1" };
+            setting.Keyframe = new TextBox { Width = 60, Text = "30" };
             root.Children.Add(LabeledControl("Keyframe Interval:", setting.Keyframe));
 
             setting.Profile = new ComboBox();
