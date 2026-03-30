@@ -26,6 +26,9 @@
 #include <windows.h>
 
 namespace GStreamerWrapper {
+    namespace {
+        constexpr size_t kSharedMasterPipelineThreshold = 5;
+    }
 
     static std::string g_server_ip;
     static std::vector<StreamConfigNative> g_configs;
@@ -1587,53 +1590,44 @@ namespace GStreamerWrapper {
         // =========================================================
                 // [수정] 16개 초과 시 Shared Master Pipeline 구축 및 시작
                 // =========================================================
-        if (g_configs.size() > 16) {
+        if (g_configs.size() >= kSharedMasterPipelineThreshold) {
             g_print(">>> [스트림 개수 %zu개] Shared Master Pipeline 모드 활성화 시도\n", g_configs.size());
             g_master_ctx.is_active = true;
+            const StreamConfigNative& first_cfg = g_configs.front();
+            const int fps = (first_cfg.framerate > 0) ? first_cfg.framerate : 30;
+            const int out_w = (first_cfg.width > 0) ? first_cfg.width : 1920;
+            const int out_h = (first_cfg.height > 0) ? first_cfg.height : 1080;
+            const int bitrate = (first_cfg.bitrate_kbps > 0) ? first_cfg.bitrate_kbps : 8000;
+            const int keyint = (first_cfg.keyframe_interval > 0) ? first_cfg.keyframe_interval : fps;
+            const bool use_nvenc = first_cfg.enable_hw_accel && is_nvidia_system();
+            const char* encoder_name = use_nvenc ? "nvh264enc" : "x264enc";
 
-            // [핵심 변경] 시스템 메모리로 다운로드(d3d11download)를 명시적으로 거치게 하여 
-            // 어떤 인코더(x264enc, qsvh264enc 등)가 붙든 호환성 문제가 없도록 안전한 파이프라인을 구축합니다.
-            // 또는 시스템 환경에 따라 qsvh264enc를 하드코딩하셔도 됩니다.
-            //std::string pipe_desc =
-            //    "d3d11screencapturesrc monitor-index=0 show-cursor=true ! "
-            //    "video/x-raw(memory:D3D11Memory),framerate=30/1 ! "
-            //    "d3d11convert ! " // 여기서 크기 변환(Scaling)과 포맷 변환을 동시에 수행
-            //    // [핵심 추가] width=960, height=540 을 강제하여 540p로 리사이징
-            //    "video/x-raw(memory:D3D11Memory),format=NV12,width=640,height=480 ! "
-            //    "d3d11download ! "  
-            //    "video/x-raw,format=NV12 ! "
-            //    // 540p 해상도이므로 비트레이트를 3000 -> 1000~1500 수준으로 낮춰도 화질이 충분하며 클라이언트 부하가 크게 줄어듭니다.
-            //    "qsvh264enc bitrate=2500 target-usage=4 ! "
-            //    "h264parse config-interval=1 ! "
-            //    "video/x-h264,stream-format=byte-stream,alignment=au ! "
-            //    "appsink name=master_sink emit-signals=true sync=false drop=true max-buffers=10";
-            //std::string pipe_desc =
-            //    "d3d11screencapturesrc monitor-index=0 show-cursor=true ! "
-            //    "video/x-raw(memory:D3D11Memory),framerate=60/1 ! "
-            //    "d3d11convert ! "
-            //    //"video/x-raw(memory:D3D11Memory),format=NV12,width=640,height=480 ! "
-            //    "video/x-raw(memory:D3D11Memory),format=NV12,width=3840,height=2160 ! "
-            //    "d3d11download ! "
-            //    "video/x-raw,format=NV12 ! "
-            //    //"qsvh264enc bitrate=2000 target-usage=7 ! "
-            //    "nvh264enc bitrate=20000 target-usage=7 ! "
-            //    "h264parse config-interval=1 ! "
-            //    "video/x-h264,stream-format=byte-stream,alignment=au ! "
-            //    "appsink name=master_sink emit-signals=true sync=false drop=true max-buffers=10";
-            std::string pipe_desc =
-                "d3d11screencapturesrc monitor-index=0 show-cursor=true ! "
-                "video/x-raw(memory:D3D11Memory),framerate=60/1 ! "
-                "d3d11convert ! "
-                "video/x-raw(memory:D3D11Memory),format=NV12,width=3840,height=2160 ! "
-                "d3d11download ! "
-                "video/x-raw,format=NV12 ! "
-                "nvh264enc bitrate=20000 preset=p1 ! " // <-- 이 부분을 수정했습니다.
-                "h264parse config-interval=1 ! "
-                "video/x-h264,stream-format=byte-stream,alignment=au ! "
-                "appsink name=master_sink emit-signals=true sync=false drop=true max-buffers=10";
+            std::ostringstream pipe_desc;
+            pipe_desc
+                << "d3d11screencapturesrc monitor-index=" << first_cfg.monitor_index << " show-cursor=true ! "
+                << "video/x-raw(memory:D3D11Memory),framerate=" << fps << "/1 ! "
+                << "d3d11convert ! "
+                << "video/x-raw(memory:D3D11Memory),format=NV12,width=" << out_w << ",height=" << out_h << " ! "
+                << "d3d11download ! "
+                << "video/x-raw,format=NV12 ! "
+                << encoder_name << " bitrate=" << bitrate;
+
+            if (use_nvenc) {
+                pipe_desc << " preset=p1";
+            }
+            else {
+                pipe_desc << " key-int-max=" << keyint << " tune=zerolatency";
+            }
+
+            pipe_desc
+                << " ! h264parse config-interval=1 ! "
+                << "video/x-h264,stream-format=byte-stream,alignment=au ! "
+                << "appsink name=master_sink emit-signals=true sync=false drop=true max-buffers=10";
 
             GError* err = nullptr;
-            g_master_ctx.pipeline = gst_parse_launch(pipe_desc.c_str(), &err);
+            const std::string pipe_desc_str = pipe_desc.str();
+            g_print(">>> Shared Master Pipeline: %s\n", pipe_desc_str.c_str());
+            g_master_ctx.pipeline = gst_parse_launch(pipe_desc_str.c_str(), &err);
 
             if (err) {
                 g_printerr(">>> Shared Master Pipeline fail create: %s\n", err->message);

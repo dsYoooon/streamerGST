@@ -12,6 +12,7 @@ namespace GStreamerDotNetTest
     public partial class MainWindow : Window
     {
         const int defaultResIndex = 3; // 0: Input, 1: 1080p, 2: 720p, 3: 540p
+        const int streamTabCollapseThreshold = 5;
         private GstProcessManager _gstProcessManager;
         private GstVideoHost _videoHost;
         private StreamConfig[] _configs = new StreamConfig[0];
@@ -221,106 +222,113 @@ namespace GStreamerDotNetTest
 
         // --- 이하 나머지 코드는 변경 없습니다. ---
 
-        private StreamConfig[] CollectStreamConfigs()
+        private StreamConfig BuildConfigFromSetting(StreamSetting s)
         {
-            var list = new List<StreamConfig>();
-            int idx = 0;
+            var cfg = new StreamConfig();
 
-            foreach (var s in _streamSettings)
+            int mi;
+            int.TryParse(s.Monitor.Text, out mi);
+            cfg.MonitorIndex = mi;
+
+            int cx, cy, cw, ch;
+            int.TryParse(s.CropX.Text, out cx);
+            int.TryParse(s.CropY.Text, out cy);
+            int.TryParse(s.CropW.Text, out cw);
+            int.TryParse(s.CropH.Text, out ch);
+            cfg.CropX = cx; cfg.CropY = cy; cfg.CropW = cw; cfg.CropH = ch;
+
+            bool useInput = s.UseInputResolution;
+
+            if (useInput)
             {
-                var cfg = new StreamConfig();
-
-                int mi;
-                int.TryParse(s.Monitor.Text, out mi);
-                cfg.MonitorIndex = mi;
-
-                int cx, cy, cw, ch;
-                int.TryParse(s.CropX.Text, out cx);
-                int.TryParse(s.CropY.Text, out cy);
-                int.TryParse(s.CropW.Text, out cw);
-                int.TryParse(s.CropH.Text, out ch);
-                cfg.CropX = cx; cfg.CropY = cy; cfg.CropW = cw; cfg.CropH = ch;
-
-                bool useInput = s.UseInputResolution;
-
-                if (useInput)
+                if (cw > 0 && ch > 0)
                 {
-                    if (cw > 0 && ch > 0)
-                    {
-                        cfg.Width = cw;
-                        cfg.Height = ch;
-                    }
-                    else
-                    {
-                        int mw, mh;
-                        if (DisplayHelper.TryGetMonitorSize(cfg.MonitorIndex, out mw, out mh))
-                        {
-                            cfg.CropX = 0; cfg.CropY = 0;
-                            cfg.CropW = mw; cfg.CropH = mh;
-                            cfg.Width = mw; cfg.Height = mh;
-                        }
-                        else
-                        {
-                            cfg.Width = 0; cfg.Height = 0;
-                        }
-                    }
+                    cfg.Width = cw;
+                    cfg.Height = ch;
                 }
                 else
                 {
-                    string res = s.Resolution.SelectedItem as string;
-                    if (res == "1080p") { cfg.Width = 1920; cfg.Height = 1080; }
-                    else if (res == "720p") { cfg.Width = 1280; cfg.Height = 720; }
-                    else if (res == "540p") { cfg.Width = 960; cfg.Height = 540; }
-                    else { cfg.Width = 0; cfg.Height = 0; }
-                }
-
-                int fr, br, ki;
-                int.TryParse(s.FrameRate.Text, out fr);
-                int.TryParse(s.Bitrate.Text, out br);
-                int.TryParse(s.Keyframe.Text, out ki);
-                cfg.Framerate = fr;
-                cfg.BitrateKbps = br;
-                cfg.KeyframeInterval = ki;
-                cfg.Port = 10554 + idx++;
-                cfg.StreamIndex = idx;
-                cfg.BitrateControl = s.BitrateControl.SelectedItem as string;
-                cfg.Profile = s.Profile.SelectedItem as string;
-
-                cfg.EnableAudio = s.AudioEnable.SelectedIndex == 0;
-                cfg.AudioDevice = s.AudioDevice.SelectedItem as string;
-
-                cfg.EnableHardwareAccel = s.HwAccel.SelectedIndex == 0;
-                cfg.EnableOsd = s.OsdEnable.SelectedIndex == 0;
-                cfg.EnableMultiCast = (s.MultiCastEnable != null && s.MultiCastEnable.SelectedIndex == 1);
-
-                if (s.MultiCastIp != null)
-                {
-                    cfg.MultiCastIP = s.MultiCastIp.Text.Trim();
-                    if (string.IsNullOrWhiteSpace(cfg.MultiCastIP)) cfg.MultiCastIP = null;
-                }
-
-                //if (s.MultiCastInterface != null)
-                //{
-                //    var selectedInterface = s.MultiCastInterface.SelectedItem as string;
-                //    if (string.IsNullOrWhiteSpace(selectedInterface)) selectedInterface = null;
-                //    cfg.MultiCastInterface = selectedInterface;
-                //}01
-                if (s.MultiCastInterface != null)
-                {
-                    var selectedInterfaceName = s.MultiCastInterface.SelectedItem as string; // "이더넷 2"
-                    string ipAddress = GetIpAddressFromInterfaceName(selectedInterfaceName);  // "192.168.10.15"
-
-                    if (string.IsNullOrWhiteSpace(ipAddress))
+                    int mw, mh;
+                    if (DisplayHelper.TryGetMonitorSize(cfg.MonitorIndex, out mw, out mh))
                     {
-                        cfg.MultiCastInterface = null;
-                        Debug.WriteLine($"경고: 인터페이스 '{selectedInterfaceName}'에서 IPv4 주소를 찾지 못했습니다.");
+                        cfg.CropX = 0; cfg.CropY = 0;
+                        cfg.CropW = mw; cfg.CropH = mh;
+                        cfg.Width = mw; cfg.Height = mh;
                     }
                     else
                     {
-                        // C++ 래퍼로 IP 주소를 전달합니다.
-                        cfg.MultiCastInterface = ipAddress;
+                        cfg.Width = 0; cfg.Height = 0;
                     }
                 }
+            }
+            else
+            {
+                string res = s.Resolution.SelectedItem as string;
+                if (res == "1080p") { cfg.Width = 1920; cfg.Height = 1080; }
+                else if (res == "720p") { cfg.Width = 1280; cfg.Height = 720; }
+                else if (res == "540p") { cfg.Width = 960; cfg.Height = 540; }
+                else { cfg.Width = 0; cfg.Height = 0; }
+            }
+
+            int fr, br, ki;
+            int.TryParse(s.FrameRate.Text, out fr);
+            int.TryParse(s.Bitrate.Text, out br);
+            int.TryParse(s.Keyframe.Text, out ki);
+            cfg.Framerate = fr;
+            cfg.BitrateKbps = br;
+            cfg.KeyframeInterval = ki;
+            cfg.BitrateControl = s.BitrateControl.SelectedItem as string;
+            cfg.Profile = s.Profile.SelectedItem as string;
+
+            cfg.EnableAudio = s.AudioEnable.SelectedIndex == 0;
+            cfg.AudioDevice = s.AudioDevice.SelectedItem as string;
+
+            cfg.EnableHardwareAccel = s.HwAccel.SelectedIndex == 0;
+            cfg.EnableOsd = s.OsdEnable.SelectedIndex == 0;
+            cfg.EnableMultiCast = (s.MultiCastEnable != null && s.MultiCastEnable.SelectedIndex == 1);
+
+            if (s.MultiCastIp != null)
+            {
+                cfg.MultiCastIP = s.MultiCastIp.Text.Trim();
+                if (string.IsNullOrWhiteSpace(cfg.MultiCastIP)) cfg.MultiCastIP = null;
+            }
+
+            if (s.MultiCastInterface != null)
+            {
+                var selectedInterfaceName = s.MultiCastInterface.SelectedItem as string; // "이더넷 2"
+                string ipAddress = GetIpAddressFromInterfaceName(selectedInterfaceName);  // "192.168.10.15"
+
+                if (string.IsNullOrWhiteSpace(ipAddress))
+                {
+                    cfg.MultiCastInterface = null;
+                    Debug.WriteLine($"경고: 인터페이스 '{selectedInterfaceName}'에서 IPv4 주소를 찾지 못했습니다.");
+                }
+                else
+                {
+                    // C++ 래퍼로 IP 주소를 전달합니다.
+                    cfg.MultiCastInterface = ipAddress;
+                }
+            }
+
+            return cfg;
+        }
+
+        private StreamConfig[] CollectStreamConfigs()
+        {
+            var list = new List<StreamConfig>();
+            int requestedCount;
+            if (!int.TryParse(Textbox_numofstreamer.Text, out requestedCount) || requestedCount < 0)
+                requestedCount = _streamSettings.Count;
+
+            bool useSingleTabSetting = requestedCount >= streamTabCollapseThreshold && _streamSettings.Count > 0;
+            int loopCount = useSingleTabSetting ? requestedCount : _streamSettings.Count;
+
+            for (int i = 0; i < loopCount; i++)
+            {
+                StreamSetting source = useSingleTabSetting ? _streamSettings[0] : _streamSettings[i];
+                var cfg = BuildConfigFromSetting(source);
+                cfg.Port = 10554 + i;
+                cfg.StreamIndex = i + 1;
                 list.Add(cfg);
             }
 
@@ -394,7 +402,9 @@ namespace GStreamerDotNetTest
         {
             StreamSettingsTab.Items.Clear();
             _streamSettings.Clear();
-            for (int i = 0; i < count; i++)
+            int tabCount = count >= streamTabCollapseThreshold ? 1 : count;
+
+            for (int i = 0; i < tabCount; i++)
             {
                 var setting = CreateStreamSettingTab(i);
                 _streamSettings.Add(setting);
