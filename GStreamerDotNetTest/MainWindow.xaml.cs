@@ -267,6 +267,7 @@ namespace GStreamerDotNetTest
                 if (res == "1080p") { cfg.Width = 1920; cfg.Height = 1080; }
                 else if (res == "720p") { cfg.Width = 1280; cfg.Height = 720; }
                 else if (res == "540p") { cfg.Width = 960; cfg.Height = 540; }
+                else if (res == "4k") { cfg.Width = 3840; cfg.Height = 2160; }
                 else { cfg.Width = 0; cfg.Height = 0; }
             }
 
@@ -455,6 +456,7 @@ namespace GStreamerDotNetTest
             setting.Resolution.Items.Add("Input");
             setting.Resolution.Items.Add("1080p");
             setting.Resolution.Items.Add("720p");
+            setting.Resolution.Items.Add("4k");
             setting.Resolution.Items.Add("540p");
             setting.Resolution.SelectedIndex = defaultResIndex;
             setting.UseInputResolution = false;

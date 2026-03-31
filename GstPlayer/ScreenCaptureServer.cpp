@@ -1597,7 +1597,7 @@ namespace GStreamerWrapper {
             const int fps = (first_cfg.framerate > 0) ? first_cfg.framerate : 30;
             const int out_w = (first_cfg.width > 0) ? first_cfg.width : 1920;
             const int out_h = (first_cfg.height > 0) ? first_cfg.height : 1080;
-            const int bitrate = (first_cfg.bitrate_kbps > 0) ? first_cfg.bitrate_kbps : 8000;
+            const int bitrate = (first_cfg.bitrate_kbps > 0) ? first_cfg.bitrate_kbps : 20000;
             const int keyint = (first_cfg.keyframe_interval > 0) ? first_cfg.keyframe_interval : fps;
             const bool use_nvenc = first_cfg.enable_hw_accel && is_nvidia_system();
             const char* encoder_name = use_nvenc ? "nvh264enc" : "x264enc";
